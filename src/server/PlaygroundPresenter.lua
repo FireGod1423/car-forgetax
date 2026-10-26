@@ -73,14 +73,9 @@ function PlaygroundPresenter.new()
 			local model = models[raceId]
 			models[raceId] = nil
 			lanes[raceId] = nil
-			if model == nil then
-				return
+			if model ~= nil then
+				model:Destroy()
 			end
-			task.delay(1.5, function()
-				if model.Parent ~= nil then
-					model:Destroy()
-				end
-			end)
 		end,
 	}
 end

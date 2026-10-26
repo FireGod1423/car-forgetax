@@ -29,6 +29,13 @@ PlaySessionService.MemoryNotice = "關服後車庫與金幣會消失。目前是
 PlaySessionService.StarterModelId = "test_common_r0"
 PlaySessionService.PullInterval = 1.5
 PlaySessionService.UpgradeInterval = 0.75
+PlaySessionService.AutoRaceInterval = 1
+
+PlaySessionService.AutoState = table.freeze({
+	Idle = "Idle",
+	Running = "Running",
+	Stopping = "Stopping",
+})
 
 PlaySessionService.Reason = table.freeze({
 	InvalidPlayer = "InvalidPlayer",
@@ -42,6 +49,7 @@ PlaySessionService.Reason = table.freeze({
 	RaceInProgress = "RaceInProgress",
 	InvalidPower = "InvalidPower",
 	BossDisabled = "BossDisabled",
+	CarRacing = "CarRacing",
 })
 
 local ACTIONS = {
@@ -51,6 +59,8 @@ local ACTIONS = {
 	SelectCar = true,
 	StartRace = true,
 	StartBoss = true,
+	StartAutoRace = true,
+	StopAutoRace = true,
 }
 
 local function isPlayerKey(playerKey: any): boolean
@@ -154,6 +164,16 @@ function PlaySessionService.new(options)
 		}
 	end
 
+	local function lockedInstanceId(session)
+		if session.auto ~= nil and (session.auto.state == "Running" or session.auto.state == "Stopping") then
+			return session.auto.instanceId
+		end
+		if session.race ~= nil and session.race.active == true then
+			return session.race.instanceId
+		end
+		return nil
+	end
+
 	local function listCars(session)
 		local records = session.inventory:ListCars(session.key)
 		local cars = {}
@@ -163,10 +183,23 @@ function PlaySessionService.new(options)
 		for _, record in ipairs(records) do
 			local view = carView(session, record)
 			if view ~= nil then
+				view.racing = lockedInstanceId(session) == view.instanceId
 				table.insert(cars, view)
 			end
 		end
 		return cars
+	end
+
+	local function autoSnapshot(session)
+		local auto = session.auto
+		return {
+			autoState = auto.state,
+			autoRound = auto.round,
+			autoCompleted = auto.completed,
+			autoEarned = auto.earned,
+			autoInstanceId = auto.instanceId,
+			lockedInstanceId = lockedInstanceId(session),
+		}
 	end
 
 	local function publicState(session, extra)
@@ -183,6 +216,10 @@ function PlaySessionService.new(options)
 			raceId = if session.race ~= nil then session.race.raceId else nil,
 			raceMode = if session.race ~= nil then session.race.mode else nil,
 		}
+		local auto = autoSnapshot(session)
+		for key, value in pairs(auto) do
+			state[key] = value
+		end
 		if extra ~= nil then
 			for key, value in pairs(extra) do
 				state[key] = value
@@ -207,11 +244,73 @@ function PlaySessionService.new(options)
 		end
 	end
 
-	local function finishRace(session, race)
+	local launchRace
+
+	local function idleAuto(session)
+		session.auto.state = PlaySessionService.AutoState.Idle
+		session.auto.instanceId = nil
+		session.auto.round = 0
+	end
+
+	-- 只取消這一場。已結算的場次保持原獎勵，不會在這裡扣回。
+	local function cancelUnfinished(session, race): boolean
+		if race == nil or race.rewarded == true or race.cancelled == true then
+			return false
+		end
+		race.cancelled = true
+		race.active = false
+		releaseLane(race.lane)
+		race.lane = nil
+		emit("onRaceFinished", race.raceId)
+		return true
+	end
+
+	local function finishRace(session, race, now: number)
 		if race.rewarded == true or race.cancelled == true then
 			race.active = false
 			releaseLane(race.lane)
 			race.lane = nil
+			return
+		end
+		-- 停止若先發生，世代已經換過，這一場不能再發獎，也不能啟動下一場。
+		if race.auto == true and session.auto.generation ~= race.generation then
+			cancelUnfinished(session, race)
+			return
+		end
+		if race.auto == true and session.auto.state ~= PlaySessionService.AutoState.Running then
+			cancelUnfinished(session, race)
+			return
+		end
+		local record = session.inventory:GetCar(session.key, race.instanceId)
+		if record == nil then
+			-- 車已經不在車庫時，這場不發獎，也不再往下循環。
+			race.cancelled = true
+			race.active = false
+			releaseLane(race.lane)
+			race.lane = nil
+			emit("onRaceFinished", race.raceId)
+			if race.auto == true then
+				idleAuto(session)
+			end
+			local payload = {
+				ok = true,
+				raceId = race.raceId,
+				mode = race.mode,
+				duration = race.plan.duration,
+				power = race.plan.power,
+				reward = 0,
+				balance = session.wallet:GetBalance(session.key),
+				won = race.plan.won,
+				bossTarget = race.plan.bossTarget,
+				memoryNotice = PlaySessionService.MemoryNotice,
+				auto = race.auto == true,
+				autoContinue = false,
+			}
+			local auto = autoSnapshot(session)
+			for key, value in pairs(auto) do
+				payload[key] = value
+			end
+			tell(session.key, payload)
 			return
 		end
 		race.rewarded = true
@@ -220,11 +319,30 @@ function PlaySessionService.new(options)
 		if type(amount) == "number" and amount > 0 then
 			session.wallet:Credit(session.key, amount)
 		end
-		local balance = session.wallet:GetBalance(session.key)
+		-- 入帳後立刻記下場次。之後的展示回呼就算讓出執行權，停止也不會把這筆已發獎勵算丟。
+		if race.auto == true and session.auto ~= nil and session.auto.generation == race.generation then
+			session.auto.completed += 1
+			session.auto.earned += if type(amount) == "number" then amount else 0
+		end
 		emit("onRaceFinished", race.raceId)
 		releaseLane(race.lane)
 		race.lane = nil
-		tell(session.key, {
+
+		local autoContinue = false
+		if race.auto == true and session.auto ~= nil and session.auto.generation == race.generation and session.auto.state == PlaySessionService.AutoState.Running and session.race == race then
+			local nextHeat = launchRace(session, "race", session.auto.instanceId, now, true)
+			if nextHeat.ok == true and session.auto.generation == race.generation and session.auto.state == PlaySessionService.AutoState.Running then
+				session.auto.round = session.auto.completed + 1
+				autoContinue = true
+			elseif session.auto.generation == race.generation then
+				idleAuto(session)
+			end
+		elseif race.auto == true and session.auto ~= nil and session.auto.generation == race.generation then
+			idleAuto(session)
+		end
+
+		local balance = session.wallet:GetBalance(session.key)
+		local payload = {
 			ok = true,
 			raceId = race.raceId,
 			mode = race.mode,
@@ -235,7 +353,14 @@ function PlaySessionService.new(options)
 			won = race.plan.won,
 			bossTarget = race.plan.bossTarget,
 			memoryNotice = PlaySessionService.MemoryNotice,
-		})
+			auto = race.auto == true,
+			autoContinue = autoContinue,
+		}
+		local auto = autoSnapshot(session)
+		for key, value in pairs(auto) do
+			payload[key] = value
+		end
+		tell(session.key, payload)
 	end
 
 	local function stepRace(session, now: number)
@@ -248,9 +373,13 @@ function PlaySessionService.new(options)
 		local distance = RaceConfig.distanceAtTime(elapsed, race.plan.speed, race.plan.slow, length)
 		local pose = RaceConfig.sample(distance)
 		emit("onRaceStepped", race.raceId, pose)
+		local current = session.race
+		if current ~= race or current.active ~= true or current.cancelled == true or current.rewarded == true then
+			return
+		end
 		-- 浮點數會讓「剛好等於完賽時間」少一點點，用很小的容差補上，避免卡在終點前。
 		if elapsed + 1e-4 >= race.plan.duration then
-			finishRace(session, race)
+			finishRace(session, race, now)
 		end
 	end
 
@@ -282,6 +411,13 @@ function PlaySessionService.new(options)
 		local upgrade = CarUpgradeService.new({
 			inventory = inventory,
 			rng = sessionOptions.upgradeRng or sessionOptions.rng,
+			guard = function(guardKey, instanceId)
+				local current = sessions[guardKey]
+				if current ~= nil and lockedInstanceId(current) == instanceId then
+					return PlaySessionService.Reason.CarRacing
+				end
+				return nil
+			end,
 		})
 		local session = {
 			key = playerKey,
@@ -294,9 +430,19 @@ function PlaySessionService.new(options)
 			selectedInstanceId = nil,
 			tokens = {},
 			raceStarts = {},
+			autoTokens = {},
 			lastPull = -math.huge,
 			lastUpgrade = -math.huge,
+			lastAuto = -math.huge,
 			race = nil,
+			auto = {
+				state = PlaySessionService.AutoState.Idle,
+				instanceId = nil,
+				completed = 0,
+				earned = 0,
+				round = 0,
+				generation = 0,
+			},
 			studioTools = studioTools,
 		}
 		sessions[playerKey] = session
@@ -318,11 +464,12 @@ function PlaySessionService.new(options)
 		if session == nil then
 			return
 		end
-		if session.race ~= nil and session.race.active == true then
-			session.race.cancelled = true
-			session.race.active = false
-			emit("onRaceFinished", session.race.raceId)
-			releaseLane(session.race.lane)
+		if session.auto ~= nil then
+			session.auto.generation = (session.auto.generation or 0) + 1
+			idleAuto(session)
+		end
+		if session.race ~= nil and session.race.rewarded ~= true then
+			cancelUnfinished(session, session.race)
 		end
 		sessions[playerKey] = nil
 	end
@@ -340,14 +487,7 @@ function PlaySessionService.new(options)
 		end
 	end
 
-	local function beginRace(session, mode: string, request, token: string)
-		local storageKey = mode .. "\0" .. token
-		local previous = session.raceStarts[storageKey]
-		if previous ~= nil then
-			local replay = copyShallow(previous)
-			replay.replayed = true
-			return replay
-		end
+	launchRace = function(session, mode: string, instanceId: string, startedAt: number, autoHeat: boolean)
 		if session.race ~= nil and session.race.active == true then
 			return {
 				ok = false,
@@ -355,18 +495,6 @@ function PlaySessionService.new(options)
 				raceId = session.race.raceId,
 			}
 		end
-
-		local requestedId = request.instanceId
-		if requestedId ~= nil and type(requestedId) ~= "string" then
-			requestedId = nil
-		end
-		if type(requestedId) == "string" and (requestedId == "" or #requestedId > 80) then
-			return {
-				ok = false,
-				reason = CarInventoryService.Reason.InvalidInstanceId,
-			}
-		end
-		local instanceId = requestedId or session.selectedInstanceId
 		if type(instanceId) ~= "string" or instanceId == "" then
 			return {
 				ok = false,
@@ -407,7 +535,6 @@ function PlaySessionService.new(options)
 		local raceId = mint(mode)
 		local lane = acquireLane()
 		local pose = RaceConfig.sample(0)
-		local startedAt = clock()
 		local slowStart = nil
 		if plan.slow ~= nil then
 			slowStart = plan.slow.startDistance / plan.speed
@@ -428,6 +555,7 @@ function PlaySessionService.new(options)
 			qualityId = model.Quality,
 			upgradeLevel = record.UpgradeLevel,
 			instanceId = record.InstanceId,
+			auto = autoHeat == true,
 		}
 		session.race = {
 			active = true,
@@ -439,10 +567,12 @@ function PlaySessionService.new(options)
 			plan = plan,
 			startedAt = startedAt,
 			instanceId = record.InstanceId,
+			auto = autoHeat == true,
+			generation = if autoHeat == true then session.auto.generation else 0,
 		}
-		session.selectedInstanceId = record.InstanceId
-		session.tokens[storageKey] = raceId
-		session.raceStarts[storageKey] = copyShallow(ack)
+		if autoHeat ~= true then
+			session.selectedInstanceId = record.InstanceId
+		end
 		emit("onRaceStarted", raceId, {
 			modelId = model.ModelId,
 			qualityId = model.Quality,
@@ -451,7 +581,179 @@ function PlaySessionService.new(options)
 			lane = lane,
 			pose = pose,
 		})
-		return copyShallow(ack)
+		return ack
+	end
+
+	local function beginRace(session, mode: string, request, token: string)
+		local storageKey = mode .. "\0" .. token
+		local previous = session.raceStarts[storageKey]
+		if previous ~= nil then
+			local replay = copyShallow(previous)
+			replay.replayed = true
+			return replay
+		end
+		if session.auto ~= nil and (session.auto.state == PlaySessionService.AutoState.Running or session.auto.state == PlaySessionService.AutoState.Stopping) then
+			return {
+				ok = false,
+				reason = PlaySessionService.Reason.RaceInProgress,
+				raceId = if session.race ~= nil then session.race.raceId else nil,
+			}
+		end
+
+		local requestedId = request.instanceId
+		if requestedId ~= nil and type(requestedId) ~= "string" then
+			requestedId = nil
+		end
+		if type(requestedId) == "string" and (requestedId == "" or #requestedId > 80) then
+			return {
+				ok = false,
+				reason = CarInventoryService.Reason.InvalidInstanceId,
+			}
+		end
+		local instanceId = requestedId or session.selectedInstanceId
+		local ack = launchRace(session, mode, instanceId, clock(), false)
+		if ack.ok == true then
+			session.tokens[storageKey] = ack.raceId
+			session.raceStarts[storageKey] = copyShallow(ack)
+		end
+		return ack
+	end
+
+	local function autoAck(session, extra)
+		local ack = {
+			ok = true,
+			replayed = false,
+			balance = session.wallet:GetBalance(session.key),
+		}
+		local auto = autoSnapshot(session)
+		for key, value in pairs(auto) do
+			ack[key] = value
+		end
+		ack.raceActive = session.race ~= nil and session.race.active == true
+		if session.race ~= nil then
+			ack.raceId = session.race.raceId
+			ack.mode = session.race.mode
+			ack.duration = if session.race.plan ~= nil then session.race.plan.duration else nil
+			ack.instanceId = session.race.instanceId
+		end
+		if extra ~= nil then
+			for key, value in pairs(extra) do
+				ack[key] = value
+			end
+		end
+		return ack
+	end
+
+	local function startAuto(session, request, token: string)
+		local storageKey = "StartAutoRace\0" .. token
+		local previous = session.autoTokens[storageKey]
+		if previous ~= nil then
+			local replay = autoAck(session)
+			replay.replayed = true
+			replay.ok = previous.ok == true
+			replay.reason = previous.reason
+			return replay
+		end
+		if session.auto.state == PlaySessionService.AutoState.Running or session.auto.state == PlaySessionService.AutoState.Stopping then
+			local replay = autoAck(session)
+			replay.replayed = true
+			return replay
+		end
+		if session.race ~= nil and session.race.active == true then
+			return {
+				ok = false,
+				reason = PlaySessionService.Reason.RaceInProgress,
+				raceId = session.race.raceId,
+			}
+		end
+		if clock() - session.lastAuto < PlaySessionService.AutoRaceInterval then
+			return {
+				ok = false,
+				reason = PlaySessionService.Reason.RateLimited,
+				balance = session.wallet:GetBalance(session.key),
+			}
+		end
+
+		local requestedId = request.instanceId
+		if requestedId ~= nil and type(requestedId) ~= "string" then
+			requestedId = nil
+		end
+		if type(requestedId) == "string" and (requestedId == "" or #requestedId > 80) then
+			local failed = {
+				ok = false,
+				reason = CarInventoryService.Reason.InvalidInstanceId,
+			}
+			session.autoTokens[storageKey] = copyShallow(failed)
+			return failed
+		end
+		local instanceId = requestedId or session.selectedInstanceId
+		if type(instanceId) ~= "string" or instanceId == "" then
+			local failed = {
+				ok = false,
+				reason = PlaySessionService.Reason.NoSelectedCar,
+			}
+			session.autoTokens[storageKey] = copyShallow(failed)
+			return failed
+		end
+
+		session.lastAuto = clock()
+		local previousSelection = session.selectedInstanceId
+		session.auto.generation = (session.auto.generation or 0) + 1
+		session.auto.state = PlaySessionService.AutoState.Running
+		session.auto.instanceId = instanceId
+		session.auto.completed = 0
+		session.auto.earned = 0
+		session.auto.round = 0
+		local heat = launchRace(session, "race", instanceId, clock(), true)
+		if heat.ok ~= true then
+			idleAuto(session)
+			session.selectedInstanceId = previousSelection
+			local failed = {
+				ok = false,
+				reason = heat.reason,
+			}
+			session.autoTokens[storageKey] = copyShallow(failed)
+			return failed
+		end
+		session.selectedInstanceId = instanceId
+		session.auto.round = 1
+		local ack = autoAck(session, {
+			duration = heat.duration,
+			power = heat.power,
+			displayName = heat.displayName,
+			modelId = heat.modelId,
+			qualityId = heat.qualityId,
+			upgradeLevel = heat.upgradeLevel,
+			raceId = heat.raceId,
+			instanceId = heat.instanceId,
+		})
+		session.autoTokens[storageKey] = {
+			ok = true,
+		}
+		return ack
+	end
+
+	local function stopAuto(session)
+		local race = session.race
+		local activeAuto = race ~= nil and race.auto == true and race.active == true and race.rewarded ~= true and race.cancelled ~= true
+		if session.auto.state == PlaySessionService.AutoState.Idle and activeAuto ~= true then
+			local ack = autoAck(session)
+			ack.replayed = true
+			ack.cancelledHeat = false
+			return ack
+		end
+		-- 先換世代，完賽回呼就算同時進來也只能看到「這場已取消」。
+		session.auto.generation = (session.auto.generation or 0) + 1
+		local cancelled = false
+		if race ~= nil and race.auto == true and race.rewarded ~= true then
+			cancelled = cancelUnfinished(session, race)
+		end
+		idleAuto(session)
+		session.lastAuto = -math.huge
+		local ack = autoAck(session)
+		ack.replayed = false
+		ack.cancelledHeat = cancelled
+		return ack
 	end
 
 	local function reservedCall(session, action: string, token: string, interval: number, invoke)
@@ -589,6 +891,15 @@ function PlaySessionService.new(options)
 					reason = idReason or CarInventoryService.Reason.InvalidInstanceId,
 				}
 			end
+			if lockedInstanceId(session) == instanceId then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.CarRacing,
+					instanceId = instanceId,
+					charged = false,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
 			return reservedCall(session, action, token, PlaySessionService.UpgradeInterval, function(requestId)
 				local result = session.upgrade:Upgrade(session.key, instanceId, requestId)
 				local affectedId = result.instanceId or instanceId
@@ -623,6 +934,12 @@ function PlaySessionService.new(options)
 
 		if action == "StartRace" then
 			return beginRace(session, "race", request, token)
+		end
+		if action == "StartAutoRace" then
+			return startAuto(session, request, token)
+		end
+		if action == "StopAutoRace" then
+			return stopAuto(session)
 		end
 		if action == "StartBoss" then
 			if bossEnabled ~= true then

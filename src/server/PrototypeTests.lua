@@ -421,6 +421,232 @@ local function testBossAndOwnership()
 	return "玩家 Remote 不能開 Boss；演算法、勝負與車輛所有權仍由伺服器決定"
 end
 
+local function testAutoRace()
+	now = 30000
+	finishes = {}
+	local startedCount = 0
+	local finishedCount = 0
+	local service = newService({
+		onRaceStarted = function()
+			startedCount += 1
+		end,
+		onRaceFinished = function()
+			finishedCount += 1
+		end,
+	})
+	local session = service:createSession("auto-player")
+	local carId = session.selectedInstanceId
+	local before = balanceOf(session)
+	local other = session.inventory:CreateCar(session.key, "test_rare_r0", 0)
+	local first = service:dispatch(session.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-token-01",
+		duration = 1,
+		reward = 99999,
+		won = true,
+	})
+	assertEqual(first.ok, true, "自動競速沒有開始")
+	assertEqual(first.autoState, "Running", "狀態不是 Running")
+	assertEqual(first.autoRound, 1, "第一場場次")
+	assertClose(first.duration, 40, "客戶端改寫了自動競速時間")
+	local pull = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "auto-pull-0001",
+	})
+	assertEqual(pull.ok, true, "自動競速期間不能抽車")
+	assertEqual(pull.price, CarConfig.SinglePullPrice, "抽車價格被改掉")
+	local denied = service:dispatch(session.key, {
+		action = "Upgrade",
+		attemptToken = "auto-up-locked1",
+		instanceId = carId,
+	})
+	assertEqual(denied.reason, PlaySessionService.Reason.CarRacing, "參賽車仍可強化")
+	assertEqual(session.inventory:GetCar(session.key, carId).UpgradeLevel, 0, "被拒絕的強化改了等級")
+	local allowed = service:dispatch(session.key, {
+		action = "Upgrade",
+		attemptToken = "auto-up-other01",
+		instanceId = other.InstanceId,
+	})
+	assertEqual(allowed.ok, true, "其他車不能強化")
+	assertEqual(session.inventory:GetCar(session.key, carId).UpgradeLevel, 0, "強化其他車時改到參賽車")
+	service:dispatch(session.key, {
+		action = "SelectCar",
+		attemptToken = "auto-select-01",
+		instanceId = other.InstanceId,
+	})
+	local locked = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(locked.lockedInstanceId, carId, "選別台車就換掉參賽車")
+	assertEqual(locked.selectedInstanceId, other.InstanceId, "不能預選下一台車")
+	local duplicate = service:dispatch(session.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-token-02",
+		reward = 1,
+		duration = 1,
+	})
+	assertEqual(duplicate.replayed, true, "重複開始又開了一場")
+	assertEqual(duplicate.autoRound, 1, "重複開始重置了場次")
+	local blockedSingle = service:dispatch(session.key, {
+		action = "StartRace",
+		attemptToken = "auto-single-01",
+	})
+	assertEqual(blockedSingle.reason, PlaySessionService.Reason.RaceInProgress, "自動競速期間又能開單場")
+
+	local duration = first.duration
+	local t0 = now
+	service:advanceAll(t0 + duration)
+	service:advanceAll(t0 + duration * 2)
+	service:advanceAll(t0 + duration * 3)
+	local midway = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(midway.autoCompleted, 3, "沒有連續完成三場")
+	assertEqual(midway.autoEarned, RaceConfig.NormalReward * 3, "三場累積不是 540")
+	assertEqual(midway.autoState, "Running", "三場後循環停了")
+	assertEqual(midway.autoRound, 4, "第四場沒有自動開始")
+	assertEqual(midway.raceActive, true, "下一場沒有在跑")
+	assertEqual(balanceOf(session), before - CarConfig.SinglePullPrice + RaceConfig.NormalReward * 3, "三場加抽車後的餘額")
+	assertEqual(finishes[session.key].reward, RaceConfig.NormalReward, "單場獎金不是 180")
+	assertEqual(finishes[session.key].autoContinue, true, "伺服器沒有接下一場")
+	assertEqual(startedCount, 4, "展示車沒有每場重建")
+	assertEqual(finishedCount, 3, "完賽模型沒有清理")
+	local stillOne = service:dispatch(session.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-token-03",
+	})
+	assertEqual(stillOne.replayed, true, "三場後又能開第二個循環")
+	assertEqual(stillOne.autoCompleted, 3, "重複開始清掉累積")
+
+	local stop = service:dispatch(session.key, {
+		action = "StopAutoRace",
+		attemptToken = "auto-stop-0001",
+	})
+	assertEqual(stop.ok, true, "不能停止")
+	assertEqual(stop.autoState, "Idle", "停止後沒有立刻回到 Idle")
+	assertEqual(stop.raceActive, false, "停止後比賽還在跑")
+	assertEqual(stop.lockedInstanceId, nil, "停止後沒有立刻解鎖")
+	assertEqual(stop.autoCompleted, 3, "取消的場次被算進完成數")
+	assertEqual(stop.autoEarned, RaceConfig.NormalReward * 3, "取消的場次發了獎")
+	assertEqual(balanceOf(session), before - CarConfig.SinglePullPrice + RaceConfig.NormalReward * 3, "停止當下餘額被改掉")
+	local stopAgain = service:dispatch(session.key, {
+		action = "StopAutoRace",
+		attemptToken = "auto-stop-0002",
+	})
+	assertEqual(stopAgain.replayed, true, "重複停止造成異常")
+	assertEqual(stopAgain.autoState, "Idle", "重複停止改了狀態")
+	assertEqual(stopAgain.autoEarned, RaceConfig.NormalReward * 3, "重複停止又結算一次")
+	local balanceAtStop = balanceOf(session)
+	service:advanceAll(t0 + duration * 8)
+	assertEqual(balanceOf(session), balanceAtStop, "取消後仍發了獎")
+	local stayed = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(stayed.autoState, "Idle", "取消後又開始循環")
+	assertEqual(stayed.raceActive, false, "取消後場次還在跑")
+	assertEqual(stayed.autoCompleted, 3, "取消後完成數增加")
+	assertEqual(finishedCount, 4, "停止沒有清掉展示車")
+	assertEqual(startedCount, 4, "停止後又開了下一場")
+	now += 1
+	local freed = service:dispatch(session.key, {
+		action = "Upgrade",
+		attemptToken = "auto-up-after01",
+		instanceId = carId,
+	})
+	assertEqual(freed.ok, true, "停止後參賽車仍不能強化")
+	assertTrue(freed.reason ~= PlaySessionService.Reason.CarRacing, "解鎖後仍回 CarRacing")
+
+	now += 2
+	local oldRaceId = stop.raceId
+	local restarted = service:dispatch(session.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-restart-01",
+		duration = 1,
+		reward = 99999,
+	})
+	assertEqual(restarted.ok, true, "停止後不能立刻再開始")
+	assertEqual(restarted.autoRound, 1, "新的循環不是第一場")
+	assertEqual(restarted.autoCompleted, 0, "新的循環沿用了舊場次")
+	assertEqual(restarted.raceActive, true, "新的場次沒有開始")
+	assertTrue(restarted.raceId ~= oldRaceId, "新場次沿用了舊場次編號")
+	assertTrue(type(restarted.duration) == "number" and restarted.duration >= RaceConfig.MinDuration, "重新開始沒有伺服器時間")
+	assertTrue(math.abs(restarted.duration - 1) > 1, "客戶端改寫了重新開始的時間")
+	local restartBalance = balanceOf(session)
+	service:advanceAll(now + 5)
+	assertEqual(balanceOf(session), restartBalance, "舊場次的延遲結算發了獎")
+	local restartStop = service:dispatch(session.key, {
+		action = "StopAutoRace",
+		attemptToken = "auto-restart-stop",
+	})
+	assertEqual(restartStop.autoState, "Idle", "新場次不能立刻停止")
+	assertEqual(restartStop.raceActive, false, "新場次停止後還在跑")
+	assertEqual(balanceOf(session), restartBalance, "立刻停止的新場次發了獎")
+	service:advanceAll(now + restarted.duration + 5)
+	assertEqual(balanceOf(session), restartBalance, "已取消的新場次後來仍發了獎")
+	local quiet = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(quiet.autoState, "Idle", "取消的新場次又自動開始")
+	assertEqual(quiet.raceActive, false, "取消後仍有進行中的場次")
+
+	now = 80000
+	local ghost = service:createSession("auto-ghost")
+	local ghostId = ghost.selectedInstanceId
+	local ghostBefore = balanceOf(ghost)
+	local ghostStart = service:dispatch(ghost.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-ghost-01",
+		reward = 99999,
+	})
+	assertEqual(ghostStart.ok, true, "缺車測試沒有開始")
+	ghost.inventory:RemoveCar(ghost.key, ghostId)
+	service:advanceAll(now + ghostStart.duration)
+	assertEqual(balanceOf(ghost), ghostBefore, "車被刪掉後仍發了獎")
+	local ghostState = service:dispatch(ghost.key, { action = "GetState" })
+	assertEqual(ghostState.autoState, "Idle", "缺車後還在循環")
+	assertEqual(ghostState.raceActive, false, "缺車後場次還在跑")
+
+	now = 90000
+	local leaver = service:createSession("auto-leaver")
+	local wallet = leaver.wallet
+	local leaveKey = leaver.key
+	local leaveBefore = wallet:GetBalance(leaveKey)
+	local leaveStart = service:dispatch(leaveKey, {
+		action = "StartAutoRace",
+		attemptToken = "auto-leave-01",
+	})
+	assertEqual(leaveStart.ok, true, "離線測試沒有開始")
+	service:removeSession(leaveKey)
+	service:advanceAll(now + 120)
+	assertEqual(wallet:GetBalance(leaveKey), leaveBefore, "離線後仍發了獎")
+	local rejoined = service:createSession(leaveKey)
+	local rejoinedState = service:dispatch(rejoined.key, { action = "GetState" })
+	assertEqual(rejoinedState.autoState, "Idle", "重進後繼承了舊循環")
+	assertEqual(rejoinedState.raceActive, false, "重進後還有舊場次")
+	assertEqual(rejoinedState.autoCompleted, 0, "重進後繼承了完成場次")
+
+	now = 100000
+	local paced = service:createSession("auto-paced")
+	local pacedStart = service:dispatch(paced.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-rate-0001",
+	})
+	assertEqual(pacedStart.ok, true, "頻率測試沒有開始")
+	local pacedBefore = balanceOf(paced)
+	service:dispatch(paced.key, {
+		action = "StopAutoRace",
+		attemptToken = "auto-rate-stop1",
+	})
+	service:advanceAll(now + pacedStart.duration)
+	assertEqual(balanceOf(paced), pacedBefore, "停止後把未完成場次結算了")
+	local resumed = service:dispatch(paced.key, {
+		action = "StartAutoRace",
+		attemptToken = "auto-rate-0002",
+	})
+	assertEqual(resumed.ok, true, "停止後不能立刻再開始")
+	assertEqual(resumed.autoRound, 1, "新的循環不是第一場")
+	assertEqual(resumed.autoCompleted, 0, "新的循環沿用了舊場次")
+	service:dispatch(paced.key, {
+		action = "StopAutoRace",
+		attemptToken = "auto-rate-stop2",
+	})
+	service:advanceAll(now + pacedStart.duration + 80)
+	assertEqual(balanceOf(paced), pacedBefore, "第二次取消的場次發了獎")
+	return "背景自動競速連續結算，立即停止不發獎，鎖定參賽車，離線不再發獎"
+end
+
 local function testLiveServerHasNoTestGrant()
 	now = 24000
 	local service = PlaySessionService.new({
@@ -539,6 +765,7 @@ function Tests.run()
 		{ "Studio 起始車與抽車", testStudioStarterAndPull },
 		{ "免費強化、報廢與 +10", testUpgradeRules },
 		{ "單場競速發獎", testRaceAuthority },
+		{ "背景自動競速", testAutoRace },
 		{ "Boss、所有權與拒絕加金幣", testBossAndOwnership },
 		{ "正式環境不發測試資源", testLiveServerHasNoTestGrant },
 		{ "場景與玩具車模型", testSceneAndVisuals },

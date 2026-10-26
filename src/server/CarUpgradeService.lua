@@ -56,6 +56,8 @@ function CarUpgradeService.new(options)
 	local rng = options.rng or RandomSource.new()
 	-- 未來的道具背包必須在伺服器建立服務時注入。Upgrade 不接受客戶端傳來的券。
 	local getServerProtection = options.getServerProtection
+	-- 可選。回傳非空字串時，這次強化不得改車庫。用來擋住正在參賽的車。
+	local guard = options.guard
 	local cached = {}
 	local pending = {}
 	local carLocks = {}
@@ -78,6 +80,20 @@ function CarUpgradeService.new(options)
 			end
 		end
 		return result
+	end
+
+	local function racingBlock(playerKey, instanceId, requestId, previousLevel)
+		if type(guard) ~= "function" then
+			return nil
+		end
+		local reason = guard(playerKey, instanceId)
+		if type(reason) ~= "string" or reason == "" then
+			return nil
+		end
+		return fail(requestId, reason, {
+			instanceId = instanceId,
+			previousLevel = previousLevel,
+		})
 	end
 
 	-- 多出來的參數直接丟掉，避免客戶端把保護券或指定結果塞進來。
@@ -122,6 +138,11 @@ function CarUpgradeService.new(options)
 			})
 			cached[key] = result
 			return copyResult(result)
+		end
+		local blocked = racingBlock(playerKey, instanceId, requestId, car.UpgradeLevel)
+		if blocked ~= nil then
+			cached[key] = blocked
+			return copyResult(blocked)
 		end
 
 		-- 同一台車已有強化在進行時直接拒絕，不排隊，也不寫進完成紀錄。
@@ -169,6 +190,11 @@ function CarUpgradeService.new(options)
 			end
 
 			if outcomeId == UpgradeConfig.Outcome.Destroy then
+				-- 抽取之後、寫入之前再查一次。避免強化途中這台車已開始比賽仍被報廢。
+				local blockedNow = racingBlock(playerKey, instanceId, requestId, car.UpgradeLevel)
+				if blockedNow ~= nil then
+					return blockedNow
+				end
 				local removed, removeReason = inventory:RemoveCar(playerKey, instanceId)
 				if removed ~= true then
 					return fail(requestId, CarUpgradeService.Reason.UpdateFailed, {
@@ -221,6 +247,10 @@ function CarUpgradeService.new(options)
 
 			local stored = car
 			if nextLevel ~= car.UpgradeLevel then
+				local blockedNow = racingBlock(playerKey, instanceId, requestId, car.UpgradeLevel)
+				if blockedNow ~= nil then
+					return blockedNow
+				end
 				local updated, updateReason = inventory:SetUpgradeLevel(playerKey, instanceId, nextLevel)
 				if updated == nil then
 					return fail(requestId, CarUpgradeService.Reason.UpdateFailed, {

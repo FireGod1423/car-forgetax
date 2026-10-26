@@ -28,11 +28,10 @@ local REASONS = {
 	InvalidPlayer = "玩家資料尚未建立。",
 	InternalError = "伺服器處理失敗。",
 	BossDisabled = "機械暴君目前未開放。",
+	CarRacing = "這台車正在參賽，不能強化或報廢。",
 }
 
-local racing = false
 local busy = false
-local raceId = nil
 
 local function reasonText(result): string
 	if type(result) ~= "table" then
@@ -160,67 +159,84 @@ local function pull()
 	))
 end
 
-local function upgrade(instanceId)
+	local function upgrade(instanceId)
+		if busy then
+			return
+		end
+		if type(instanceId) ~= "string" or instanceId == "" then
+			return
+		end
+		busy = true
+		if ui ~= nil then
+			ui.setUpgradePending(true)
+		end
+		local result = call("Upgrade", {
+			instanceId = instanceId,
+		})
+		refresh()
+		busy = false
+		if ui ~= nil then
+			ui.setUpgradePending(false)
+		end
+		if result.outcome ~= nil then
+			ui.flash(result.outcome)
+		end
+		if result.ok ~= true then
+			ui.toast(reasonText(result))
+			return
+		end
+		if result.removed == true then
+			ui.toast("報廢：這台車已從車庫移除。")
+			return
+		end
+		ui.toast(string.format(
+			"%s：+%s → +%s，性能 %s。沒有扣金幣。",
+			tostring(result.outcomeName or result.outcome),
+			tostring(result.previousLevel),
+			tostring(result.upgradeLevel),
+			tostring(result.power)
+		))
+	end
+
+local function startAuto(instanceId)
 	if busy then
 		return
 	end
 	busy = true
-	local result = call("Upgrade", {
+	local result = call("StartAutoRace", {
 		instanceId = instanceId,
 	})
 	busy = false
-	if result.outcome ~= nil then
-		ui.flash(result.outcome)
+	refresh()
+	if result.ok ~= true then
+		ui.toast(reasonText(result))
+		ui.open("race")
+		return
 	end
+	if result.replayed == true then
+		ui.toast("自動競速已在進行，沒有另開一場。")
+	else
+		ui.toast("自動競速開始。每場由伺服器結算，關閉面板也不會停止。")
+	end
+end
+
+local function stopAuto()
+	if busy then
+		return
+	end
+	busy = true
+	local result = call("StopAutoRace")
+	busy = false
 	refresh()
 	if result.ok ~= true then
 		ui.toast(reasonText(result))
 		return
 	end
-	if result.removed == true then
-		ui.toast("報廢：這台車已從車庫移除。")
-		return
-	end
-	ui.toast(string.format(
-		"%s：+%s → +%s，性能 %s。沒有扣金幣。",
-		tostring(result.outcomeName or result.outcome),
-		tostring(result.previousLevel),
-		tostring(result.upgradeLevel),
-		tostring(result.power)
-	))
-end
-
-local function startRace(instanceId)
-	if racing or busy then
-		ui.toast("已經有一場競速在進行。")
-		return
-	end
-	racing = true
-	local result = call("StartRace", {
-		instanceId = instanceId,
-	})
-	if result.ok ~= true then
-		racing = false
-		ui.toast(reasonText(result))
-		ui.open("race")
-		return
-	end
-	raceId = result.raceId
-	ui.setRacing(true, string.format("單場競速進行中，伺服器時間 %.1f 秒", result.duration or 0))
 	if result.replayed == true then
-		ui.toast("這場競速已在進行，沒有再開始一場，也不會因此多領獎勵。")
+		ui.toast("目前沒有進行中的自動競速。")
 	else
-		ui.toast("單場競速開始。請看賽道上的玩具車，獎勵會在伺服器計算完成後發放。")
+		ui.toast("已立即停止。這一場不發獎，已完成的獎勵會保留。")
 	end
-	local watchedId = result.raceId
-	task.delay((result.duration or 40) + 3, function()
-		if racing == true and raceId == watchedId then
-			racing = false
-			raceId = nil
-			ui.setRacing(false)
-			ui.toast("沒有收到伺服器完賽結果。金幣不會因此補發。")
-		end
-	end)
 end
 
 ui = GarageUI.mount(playerGui, {
@@ -238,8 +254,11 @@ ui = GarageUI.mount(playerGui, {
 	end,
 	onPull = pull,
 	onUpgrade = upgrade,
-	onRace = function(instanceId)
-		startRace(instanceId)
+	onAutoStart = function(instanceId)
+		startAuto(instanceId)
+	end,
+	onAutoStop = function()
+		stopAuto()
 	end,
 })
 
@@ -296,11 +315,20 @@ finishedEvent.OnClientEvent:Connect(function(payload)
 	if type(payload) ~= "table" then
 		return
 	end
-	racing = false
-	raceId = nil
-	ui.setRacing(false)
 	refresh()
-	if payload.mode == "boss" then
+	if payload.autoContinue == true then
+		ui.toast(string.format(
+			"第 %d 場完成，測試金幣 +%s。下一場已開始。",
+			payload.autoCompleted or 0,
+			tostring(payload.reward or 0)
+		))
+	elseif payload.auto == true then
+		ui.toast(string.format(
+			"自動競速已停止。本場測試金幣 +%s，累積 %s。",
+			tostring(payload.reward or 0),
+			tostring(payload.autoEarned or 0)
+		))
+	elseif payload.mode == "boss" then
 		local verdict = if payload.won == true then "勝利" else "落敗"
 		ui.toast(string.format(
 			"機械暴君%s。伺服器時間 %.2f 秒，基準 %.0f 秒，測試金幣 +%s。",

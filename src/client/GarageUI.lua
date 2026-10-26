@@ -107,6 +107,8 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	local state = nil
 	local selectedId = nil
 	local upgradeId = nil
+	local upgradeNotice = nil
+	local upgradePending = false
 	local currentPage = nil
 	local racing = false
 	local racingText = ""
@@ -131,17 +133,39 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	hud.Text = "讀取車庫中…"
 	corner(hud, 8)
 
-	local banner = label(gui, 15)
-	banner.Name = "RaceBanner"
-	banner.Font = Enum.Font.GothamBold
-	banner.BackgroundColor3 = ORANGE
-	banner.BackgroundTransparency = 0.08
-	banner.TextColor3 = Color3.fromRGB(24, 26, 32)
-	banner.TextXAlignment = Enum.TextXAlignment.Center
-	banner.TextYAlignment = Enum.TextYAlignment.Center
-	banner.Visible = false
-	banner.ZIndex = 5
-	corner(banner, 8)
+	local raceStatusOpen = false
+	local raceStatus = Instance.new("Frame")
+	raceStatus.Name = "RaceStatus"
+	raceStatus.AnchorPoint = Vector2.new(1, 0)
+	raceStatus.Visible = false
+	raceStatus.BackgroundColor3 = ORANGE
+	raceStatus.BackgroundTransparency = 0.08
+	raceStatus.BorderSizePixel = 0
+	raceStatus.Active = true
+	raceStatus.ZIndex = 5
+	raceStatus.Parent = gui
+	corner(raceStatus, 8)
+	local raceStatusToggle = button(raceStatus, "展開", GOLD, UDim2.fromOffset(52, 24))
+	raceStatusToggle.Name = "Toggle"
+	raceStatusToggle.AnchorPoint = Vector2.new(1, 0)
+	raceStatusToggle.Position = UDim2.new(1, -6, 0, 4)
+	raceStatusToggle.ZIndex = 6
+	local raceStatusTitle = label(raceStatus, 14)
+	raceStatusTitle.Name = "Title"
+	raceStatusTitle.Font = Enum.Font.GothamBold
+	raceStatusTitle.TextColor3 = Color3.fromRGB(24, 26, 32)
+	raceStatusTitle.TextXAlignment = Enum.TextXAlignment.Left
+	raceStatusTitle.TextYAlignment = Enum.TextYAlignment.Center
+	raceStatusTitle.Position = UDim2.fromOffset(8, 4)
+	raceStatusTitle.Size = UDim2.new(1, -66, 0, 24)
+	raceStatusTitle.ZIndex = 6
+	local raceStatusBody = label(raceStatus, 13)
+	raceStatusBody.Name = "Body"
+	raceStatusBody.TextColor3 = Color3.fromRGB(24, 26, 32)
+	raceStatusBody.Position = UDim2.fromOffset(8, 30)
+	raceStatusBody.Size = UDim2.new(1, -16, 1, -36)
+	raceStatusBody.Visible = false
+	raceStatusBody.ZIndex = 6
 
 	local garageButton = Instance.new("TextButton")
 	garageButton.Name = "GarageButton"
@@ -255,7 +279,8 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	local world = Instance.new("WorldModel")
 	world.Parent = preview
 	local previewCamera = Instance.new("Camera")
-	previewCamera.CFrame = CFrame.lookAt(Vector3.new(0, 1.7, -7.2), Vector3.new(0, 0.45, 0))
+	previewCamera.FieldOfView = 32
+	previewCamera.CFrame = CFrame.lookAt(Vector3.new(2.2, 1.5, -2.6), Vector3.zero)
 	preview.CurrentCamera = previewCamera
 	local garageDetail = label(garagePanel, 16)
 	garageDetail.Name = "Detail"
@@ -283,9 +308,12 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	local raceDetail = label(racePanel, 16)
 	raceDetail.Name = "Detail"
 	raceDetail.ZIndex = 4
-	local raceButton = button(racePanel, "開始競速", MINT, UDim2.fromOffset(180, 44))
-	raceButton.Name = "StartRaceButton"
+	local raceButton = button(racePanel, "開始自動競速", MINT, UDim2.fromOffset(180, 44))
+	raceButton.Name = "StartAutoButton"
 	raceButton.ZIndex = 5
+	local stopButton = button(racePanel, "停止自動競速", Color3.fromRGB(255, 122, 96), UDim2.fromOffset(180, 40))
+	stopButton.Name = "StopAutoButton"
+	stopButton.ZIndex = 5
 
 	local panels = {
 		garage = garagePanel,
@@ -367,7 +395,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			row.TextWrapped = true
 			row.TextXAlignment = Enum.TextXAlignment.Left
 			row.TextColor3 = if selected then Color3.fromRGB(24, 26, 32) else Color3.new(1, 1, 1)
-			row.Text = "    " .. carLine(entry)
+			row.Text = "    " .. carLine(entry) .. (if entry.racing == true then "　參賽中" else "")
 			row.AutoButtonColor = true
 			row.Modal = false
 			row.Active = true
@@ -389,12 +417,65 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end
 	end
 
+	local previewParts = {}
+	local previewRest = CFrame.new()
+	local PREVIEW_FILL = 0.93
+	local PREVIEW_DIRECTION = Vector3.new(0.68, 0.46, -1.02).Unit
+
+	local function previewAspect(): number
+		local size = preview.AbsoluteSize
+		if size.X >= 2 and size.Y >= 2 then
+			return size.X / size.Y
+		end
+		local panelSize = garagePanel.AbsoluteSize
+		if panelSize.X >= 2 and panelSize.Y >= 2 then
+			return math.max(panelSize.X - 32, 2) / math.max(panelSize.Y * 0.48, 2)
+		end
+		return 1.7
+	end
+
+	-- 依每個零件的八個角，在斜前方與旋轉後的投影決定距離。車身約佔預覽區八成，車頭車尾和車輪留在畫面內。
+	local function framePreview()
+		if #previewParts == 0 then
+			return
+		end
+		local aspect = previewAspect()
+		local tanY = math.tan(math.rad(previewCamera.FieldOfView) * 0.5) * PREVIEW_FILL
+		local tanX = tanY * aspect
+		local dir = PREVIEW_DIRECTION
+		local look = CFrame.lookAt(dir, Vector3.zero)
+		local right = look.RightVector
+		local up = look.UpVector
+		local distance = 0.5
+		for step = 0, 7 do
+			local rotation = CFrame.Angles(0, step * math.pi / 4, 0)
+			for _, item in ipairs(previewParts) do
+				local world = rotation * item.cf
+				local half = item.size * 0.5
+				for _, sx in ipairs({ -1, 1 }) do
+					for _, sy in ipairs({ -1, 1 }) do
+						for _, sz in ipairs({ -1, 1 }) do
+							local corner = world:PointToWorldSpace(Vector3.new(sx * half.X, sy * half.Y, sz * half.Z))
+							local forward = corner:Dot(dir)
+							local needX = forward + math.abs(corner:Dot(right)) / math.max(tanX, 1e-3)
+							local needY = forward + math.abs(corner:Dot(up)) / math.max(tanY, 1e-3)
+							distance = math.max(distance, needX, needY)
+						end
+					end
+				end
+			end
+		end
+		previewCamera.CFrame = CFrame.lookAt(dir * distance, Vector3.zero)
+	end
+
 	local function showPreview(car)
 		previewModel = nil
+		previewRest = CFrame.new()
 		for _, child in ipairs(world:GetChildren()) do
 			child:Destroy()
 		end
 		if car == nil or garagePanel.Visible ~= true then
+			previewParts = {}
 			return
 		end
 		previewModel = CarVisualFactory.build({
@@ -404,6 +485,20 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			displayName = car.displayName,
 		})
 		previewModel.Parent = world
+		previewModel:PivotTo(CFrame.new())
+		local boxCf, _boxSize = previewModel:GetBoundingBox()
+		previewModel:PivotTo(previewModel:GetPivot() - boxCf.Position)
+		previewRest = previewModel:GetPivot()
+		previewParts = {}
+		for _, part in ipairs(previewModel:GetDescendants()) do
+			if part:IsA("BasePart") then
+				table.insert(previewParts, {
+					cf = part.CFrame,
+					size = part.Size,
+				})
+			end
+		end
+		framePreview()
 	end
 
 	local function applyLayout()
@@ -417,9 +512,10 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		local compact = width < 760
 		hud.Position = UDim2.fromOffset(96, 8)
 		hud.Size = UDim2.new(1, -112, 0, 32)
-		banner.AnchorPoint = Vector2.new(1, 0)
-		banner.Position = UDim2.new(1, -12, 0, 46)
-		banner.Size = UDim2.fromOffset(if compact then 220 else 320, 28)
+		local statusWidth = if compact then 230 else 300
+		local statusHeight = if raceStatusOpen then 84 else 32
+		raceStatus.Position = UDim2.new(1, -12, 0, 46)
+		raceStatus.Size = UDim2.fromOffset(statusWidth, statusHeight)
 		local panelPosition
 		local panelSize
 		if compact then
@@ -434,11 +530,12 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			panel.Size = panelSize
 		end
 		garageList.Position = UDim2.fromOffset(16, 56)
-		garageList.Size = UDim2.new(1, -32, 0.4, -28)
-		preview.Position = UDim2.new(0, 16, 0.4, 36)
-		preview.Size = UDim2.new(1, -32, 0.28, 0)
-		garageDetail.Position = UDim2.new(0, 16, 0.7, 40)
-		garageDetail.Size = UDim2.new(1, -32, 0.28, -52)
+		garageList.Size = UDim2.new(1, -32, 0.28, -16)
+		preview.Position = UDim2.new(0, 16, 0.28, 48)
+		preview.Size = UDim2.new(1, -32, 0.48, -12)
+		garageDetail.Position = UDim2.new(0, 16, 0.76, 44)
+		garageDetail.Size = UDim2.new(1, -32, 0.24, -52)
+		framePreview()
 
 		gachaDetail.Position = UDim2.fromOffset(16, 64)
 		gachaDetail.Size = UDim2.new(1, -32, 0, 140)
@@ -453,9 +550,11 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		upgradeButton.Size = UDim2.new(1, -32, 0, 44)
 
 		raceList.Position = UDim2.fromOffset(16, 56)
-		raceList.Size = UDim2.new(1, -32, 0.46, -24)
-		raceDetail.Position = UDim2.new(0, 16, 0.46, 40)
-		raceDetail.Size = UDim2.new(1, -32, 0.34, -8)
+		raceList.Size = UDim2.new(1, -32, 0.4, -20)
+		raceDetail.Position = UDim2.new(0, 16, 0.4, 44)
+		raceDetail.Size = UDim2.new(1, -32, 0.34, -16)
+		stopButton.Position = UDim2.new(0, 16, 1, -108)
+		stopButton.Size = UDim2.new(1, -32, 0, 40)
 		raceButton.Position = UDim2.new(0, 16, 1, -60)
 		raceButton.Size = UDim2.new(1, -32, 0, 44)
 	end
@@ -474,7 +573,16 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 
 		local selected = findCar(selectedId)
 		local upgradeCar = findCar(upgradeId)
-		local raceRunning = racing or (state ~= nil and state.raceActive == true)
+		local autoState = if state ~= nil and type(state.autoState) == "string" then state.autoState else "Idle"
+		local autoRound = if state ~= nil then state.autoRound or 0 else 0
+		local autoCompleted = if state ~= nil then state.autoCompleted or 0 else 0
+		local autoEarned = if state ~= nil then state.autoEarned or 0 else 0
+		local racingCar = findCar(if state ~= nil then state.autoInstanceId else nil)
+		if racingCar == nil then
+			racingCar = findCar(if state ~= nil then state.lockedInstanceId else nil)
+		end
+		local autoBusy = autoState == "Running" or autoState == "Stopping"
+		local singleRace = state ~= nil and state.raceActive == true and not autoBusy
 
 		if selected == nil then
 			garageDetail.Text = "還沒有車輛。到場景裡的抽車機花費測試金幣取得第一台車。"
@@ -501,47 +609,95 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		)
 		pullButton.Text = string.format("抽車 %d", CarConfig.SinglePullPrice)
 
-		if upgradeCar == nil then
-			upgradeDetail.Text = "請選擇一台你的車。下面會顯示伺服器實際使用的五種結果機率。強化不扣金幣。"
-		else
+		if upgradeNotice == "scrap" and upgradeCar == nil then
+			upgradeDetail.Text = "汽車已報廢，請重新選擇汽車。"
+		elseif upgradeCar == nil then
+			upgradeDetail.Text = "請先選擇汽車。\n點擊列表中的車輛後才會送出強化。強化不扣金幣。"
+		elseif upgradeCar.racing == true then
 			upgradeDetail.Text = string.format(
-				"%s　%s　目前 +%d　性能 %s\n%s\n結果只顯示伺服器實際抽到的那一個。",
+				"%s\n%s　強化 +%d　性能 %s\n識別 %s\n這台車正在參賽，伺服器會拒絕強化與報廢。\n%s",
 				upgradeCar.displayName,
 				upgradeCar.qualityName,
 				upgradeCar.upgradeLevel,
 				tostring(upgradeCar.power),
+				upgradeCar.instanceId,
+				oddsText(upgradeCar.upgradeLevel)
+			)
+		else
+			upgradeDetail.Text = string.format(
+				"%s\n%s　強化 +%d　性能 %s\n識別 %s\n%s\n結果只顯示伺服器實際抽到的那一個。",
+				upgradeCar.displayName,
+				upgradeCar.qualityName,
+				upgradeCar.upgradeLevel,
+				tostring(upgradeCar.power),
+				upgradeCar.instanceId,
 				oddsText(upgradeCar.upgradeLevel)
 			)
 		end
-		local canUpgrade = upgradeCar ~= nil and upgradeCar.upgradeLevel < CarConfig.MaxUpgradeLevel
-		upgradeButton.Text = if upgradeCar ~= nil and upgradeCar.upgradeLevel >= CarConfig.MaxUpgradeLevel
-			then "已達 +10"
-			else "強化"
+		local canUpgrade = upgradeCar ~= nil
+			and upgradePending ~= true
+			and upgradeCar.racing ~= true
+			and upgradeCar.upgradeLevel < CarConfig.MaxUpgradeLevel
+		if upgradeCar == nil then
+			upgradeButton.Text = "請先選擇汽車"
+		elseif upgradeCar.racing == true then
+			upgradeButton.Text = "參賽中"
+		elseif upgradeCar.upgradeLevel >= CarConfig.MaxUpgradeLevel then
+			upgradeButton.Text = "已達 +10"
+		else
+			upgradeButton.Text = string.format("強化：%s +%d", upgradeCar.displayName, upgradeCar.upgradeLevel)
+		end
 		setEnabled(upgradeButton, canUpgrade)
 		fillCars(upgradeList, upgradeId, function(instanceId)
 			upgradeId = instanceId
+			upgradeNotice = nil
 			render()
 		end, "沒有可強化的車")
 
-		local status = if raceRunning
-			then (if racingText ~= "" then racingText else "單場競速進行中")
-			else "目前沒有進行中的競速。"
-		if selected == nil then
-			raceDetail.Text = "請先選擇一台你的車。\n" .. status
+		local shownCar = if autoBusy and racingCar ~= nil then racingCar else selected
+		local statusLine = "尚未開始自動競速。"
+		if autoState == "Running" then
+			statusLine = "自動競速進行中。停止會立刻取消這一場，這一場不發獎。"
+		elseif autoState == "Stopping" then
+			statusLine = "正在停止自動競速。"
+		elseif singleRace then
+			statusLine = "單場競速進行中。"
+		end
+		if shownCar == nil then
+			raceDetail.Text = "請先選擇一台你的車。\n" .. statusLine
 		else
 			raceDetail.Text = string.format(
-				"目前選擇：%s　+%d　性能 %s\n%s\n單場競速。完賽後伺服器發放 %d 測試金幣，不會自動開始下一場。",
-				selected.displayName,
-				selected.upgradeLevel,
-				tostring(selected.power),
-				status,
+				"目前選擇：%s　+%d　性能 %s\n%s\n當前場次 %d　已完成 %d　累積 %d 測試金幣\n每場 %d，由伺服器結算。關閉面板也不會中斷。",
+				shownCar.displayName,
+				shownCar.upgradeLevel,
+				tostring(shownCar.power),
+				statusLine,
+				autoRound,
+				autoCompleted,
+				autoEarned,
 				RaceConfig.NormalReward
 			)
 		end
-		local canStart = selected ~= nil and not raceRunning
-		raceButton.Text = if raceRunning then "競速進行中" else "開始競速"
+		local canStart = shownCar ~= nil and autoState == "Idle" and not singleRace
+		raceButton.Text = if autoBusy then "自動競速進行中" else "開始自動競速"
 		setEnabled(raceButton, canStart)
-		fillCars(raceList, selectedId, function(instanceId)
+		stopButton.Visible = autoBusy
+		stopButton.Text = "停止自動競速"
+		setEnabled(stopButton, autoState == "Running")
+		if autoBusy then
+			raceStatus.Visible = true
+			raceStatusTitle.Text = if autoState == "Stopping"
+				then "正在停止"
+				else string.format("自動競速　第 %d 場", math.max(autoRound, 1))
+			raceStatusBody.Text = string.format("已完成 %d 場\n累積 %d 測試金幣", autoCompleted, autoEarned)
+		elseif singleRace then
+			raceStatus.Visible = true
+			raceStatusTitle.Text = "單場競速"
+			raceStatusBody.Text = racingText
+		else
+			raceStatus.Visible = false
+		end
+		fillCars(raceList, if autoBusy and racingCar ~= nil then racingCar.instanceId else selectedId, function(instanceId)
 			if handlers.onSelect ~= nil then
 				handlers.onSelect(instanceId)
 			end
@@ -560,6 +716,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end
 		if upgradeId ~= nil and findCar(upgradeId) == nil then
 			upgradeId = nil
+			upgradeNotice = "scrap"
 		end
 		render()
 	end
@@ -567,6 +724,10 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	function api.open(nextPage: string)
 		if panels[nextPage] == nil then
 			return
+		end
+		if nextPage == "upgrade" or currentPage == "upgrade" then
+			upgradeId = nil
+			upgradeNotice = nil
 		end
 		currentPage = nextPage
 		for pageName, panel in pairs(panels) do
@@ -606,11 +767,14 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end)
 	end
 
+	function api.setUpgradePending(pending: boolean)
+		upgradePending = pending == true
+		render()
+	end
+
 	function api.setRacing(active: boolean, text: string?)
 		racing = active
-		racingText = if active then (text or "單場競速進行中") else ""
-		banner.Visible = active
-		banner.Text = racingText
+		racingText = if active then (text or "競速進行中") else ""
 		render()
 	end
 
@@ -636,14 +800,32 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end
 	end)
 	upgradeButton.MouseButton1Click:Connect(function()
+		local target = upgradeId
+		local car = findCar(target)
+		if car == nil or car.racing == true or car.upgradeLevel >= CarConfig.MaxUpgradeLevel or upgradePending then
+			return
+		end
 		if handlers.onUpgrade ~= nil then
-			handlers.onUpgrade(upgradeId)
+			handlers.onUpgrade(target)
 		end
 	end)
 	raceButton.MouseButton1Click:Connect(function()
-		if handlers.onRace ~= nil then
+		if handlers.onAutoStart ~= nil then
+			handlers.onAutoStart(selectedId)
+		elseif handlers.onRace ~= nil then
 			handlers.onRace(selectedId)
 		end
+	end)
+	stopButton.MouseButton1Click:Connect(function()
+		if handlers.onAutoStop ~= nil then
+			handlers.onAutoStop()
+		end
+	end)
+	raceStatusToggle.MouseButton1Click:Connect(function()
+		raceStatusOpen = not raceStatusOpen
+		raceStatusBody.Visible = raceStatusOpen
+		raceStatusToggle.Text = if raceStatusOpen then "收合" else "展開"
+		applyLayout()
 	end)
 
 	local spinConn = RunService.RenderStepped:Connect(function(dt)
@@ -651,7 +833,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			return
 		end
 		spin += dt * 0.7
-		previewModel:PivotTo(CFrame.Angles(0, spin, 0))
+		previewModel:PivotTo(CFrame.Angles(0, spin, 0) * previewRest)
 	end)
 	local viewportConn = nil
 	local function bindViewport()
@@ -674,6 +856,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end
 	end)
 
+	preview:GetPropertyChangedSignal("AbsoluteSize"):Connect(framePreview)
 	bindViewport()
 	render()
 	return api
