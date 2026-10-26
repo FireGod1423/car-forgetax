@@ -231,6 +231,46 @@ function CarInventoryService.new(options)
 		return table.freeze(list), nil
 	end
 
+	-- 只換掉這位玩家自己的那一台，並回傳新的凍結複本。外部改不到庫存原件。
+	function service:SetUpgradeLevel(playerKey, instanceId, upgradeLevel)
+		if not isPlayerKey(playerKey) then
+			return nil, CarInventoryService.Reason.InvalidPlayer
+		end
+		if type(instanceId) ~= "string" or instanceId == "" then
+			return nil, CarInventoryService.Reason.InvalidInstanceId
+		end
+		if not CarConfig.isValidUpgradeLevel(upgradeLevel) then
+			return nil, CarInventoryService.Reason.InvalidUpgradeLevel
+		end
+
+		local bucket = carsByPlayer[playerKey]
+		local current = if bucket ~= nil then bucket[instanceId] else nil
+		if current == nil then
+			return nil, CarInventoryService.Reason.UnknownCar
+		end
+
+		local model = catalog.getByModelId(current.ModelId)
+		if model == nil then
+			return nil, CarInventoryService.Reason.UnknownModel
+		end
+
+		local updated = {
+			InstanceId = current.InstanceId,
+			ModelId = current.ModelId,
+			UpgradeLevel = upgradeLevel,
+			AcquiredRebirth = current.AcquiredRebirth,
+			CreatedAt = current.CreatedAt,
+		}
+		local ok, reason = validateRecord(updated, model)
+		if not ok then
+			return nil, reason
+		end
+
+		updated = table.freeze(updated)
+		bucket[instanceId] = updated
+		return copyRecord(updated), nil
+	end
+
 	-- 刪車後不回收 ID，避免之後的新車拿到舊識別碼。
 	function service:RemoveCar(playerKey, instanceId)
 		if not isPlayerKey(playerKey) then
