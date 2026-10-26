@@ -139,6 +139,9 @@ RunService.Heartbeat:Connect(function()
 	if not ok then
 		warn("[CarForgeTax] 競速推進失敗：" .. tostring(err))
 	end
+	pcall(function()
+		PlaygroundBuilder.stepDealer(workspace:FindFirstChild(PlaygroundBuilder.FolderName), os.clock())
+	end)
 end)
 
 print("[CarForgeTax] 概念原型已啟動。車庫與金幣只存在伺服器記憶體，關服後消失。")

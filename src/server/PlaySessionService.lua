@@ -15,6 +15,7 @@ local function importServer(moduleName: string)
 end
 
 local CarConfig = importShared("CarConfig")
+local AutoSellConfig = importShared("AutoSellConfig")
 local CarCatalog = importShared("CarCatalog")
 local UpgradeConfig = importShared("UpgradeConfig")
 local RaceConfig = importShared("RaceConfig")
@@ -22,6 +23,7 @@ local GoldWallet = importServer("GoldWallet")
 local CarInventoryService = importServer("CarInventoryService")
 local CarGachaService = importServer("CarGachaService")
 local CarUpgradeService = importServer("CarUpgradeService")
+local CarDiscoveryService = importServer("CarDiscoveryService")
 
 local PlaySessionService = {}
 
@@ -50,6 +52,7 @@ PlaySessionService.Reason = table.freeze({
 	InvalidPower = "InvalidPower",
 	BossDisabled = "BossDisabled",
 	CarRacing = "CarRacing",
+	NeedsConfirm = "NeedsConfirm",
 })
 
 local ACTIONS = {
@@ -61,6 +64,7 @@ local ACTIONS = {
 	StartBoss = true,
 	StartAutoRace = true,
 	StopAutoRace = true,
+	SetAutoSell = true,
 }
 
 local function isPlayerKey(playerKey: any): boolean
@@ -95,6 +99,7 @@ function PlaySessionService.new(options)
 	local sessions = {}
 	local usedLanes = {}
 	local sequence = 0
+	local discovery = CarDiscoveryService.new()
 
 	local function emit(method: string, ...)
 		if presenter == nil or type(presenter[method]) ~= "function" then
@@ -202,6 +207,106 @@ function PlaySessionService.new(options)
 		}
 	end
 
+	local function autoSellView(session)
+		local setting = session.autoSell or { enabled = false, maxQuality = nil }
+		local prices = {}
+		for _, qualityId in ipairs(AutoSellConfig.Order) do
+			local quality = CarConfig.getQuality(qualityId)
+			table.insert(prices, {
+				qualityId = qualityId,
+				displayName = if quality ~= nil then quality.DisplayName else qualityId,
+				price = AutoSellConfig.price(0, qualityId),
+			})
+		end
+		local sells, keeps = {}, {}
+		if setting.enabled == true and type(setting.maxQuality) == "string" then
+			sells, keeps = AutoSellConfig.split(setting.maxQuality)
+		else
+			keeps = { "Common", "Uncommon", "Rare", "Epic", "Legendary" }
+		end
+		return {
+			enabled = setting.enabled == true,
+			maxQuality = setting.maxQuality,
+			prices = prices,
+			sells = sells,
+			keeps = keeps,
+			notice = "自動販賣設定只存在這次伺服器記憶體，重進或關服後會關閉。",
+		}
+	end
+
+	-- 只處理這一台剛抽到的車。移除成功後才入帳，同一個實例與同一個抽車請求只入帳一次。
+	local function sellPulledCar(session, car, qualityId, requestId)
+		local stored = session.sales[requestId]
+		if stored ~= nil then
+			return stored
+		end
+		local balance = session.wallet:GetBalance(session.key)
+		local kept = {
+			sold = false,
+			sellPrice = 0,
+			balance = balance,
+		}
+		local setting = session.autoSell
+		if setting == nil or setting.enabled ~= true or type(setting.maxQuality) ~= "string" then
+			session.sales[requestId] = kept
+			return kept
+		end
+		if type(car) ~= "table" or type(car.InstanceId) ~= "string" or type(qualityId) ~= "string" then
+			session.sales[requestId] = kept
+			return kept
+		end
+		if car.UpgradeLevel ~= 0 or lockedInstanceId(session) == car.InstanceId then
+			session.sales[requestId] = kept
+			return kept
+		end
+		if not AutoSellConfig.covers(setting.maxQuality, qualityId) then
+			session.sales[requestId] = kept
+			return kept
+		end
+		local price = AutoSellConfig.price(session.rebirthLevel, qualityId)
+		if type(price) ~= "number" then
+			session.sales[requestId] = kept
+			return kept
+		end
+		local instanceId = car.InstanceId
+		local already = session.soldInstances[instanceId]
+		if already ~= nil then
+			local replay = {
+				sold = true,
+				sellPrice = already,
+				balance = balance,
+			}
+			session.sales[requestId] = replay
+			return replay
+		end
+		local owned = session.inventory:GetCar(session.key, instanceId)
+		if owned == nil then
+			session.sales[requestId] = kept
+			return kept
+		end
+		local removed = session.inventory:RemoveCar(session.key, instanceId)
+		if removed ~= true then
+			session.sales[requestId] = kept
+			return kept
+		end
+		session.soldInstances[instanceId] = price
+		if session.selectedInstanceId == instanceId then
+			session.selectedInstanceId = nil
+		end
+		local credited = session.wallet:Credit(session.key, price)
+		if credited ~= true then
+			session.sales[requestId] = kept
+			return kept
+		end
+		local sale = {
+			sold = true,
+			sellPrice = price,
+			balance = session.wallet:GetBalance(session.key),
+		}
+		session.sales[requestId] = sale
+		return sale
+	end
+
 	local function publicState(session, extra)
 		local balance = session.wallet:GetBalance(session.key)
 		local state = {
@@ -212,6 +317,9 @@ function PlaySessionService.new(options)
 			selectedInstanceId = session.selectedInstanceId,
 			pullPrice = CarConfig.SinglePullPrice,
 			cars = listCars(session),
+			discovered = discovery:list(session.key),
+			discoveryNotice = "圖鑑只存在這次伺服器記憶體，關服後會消失。",
+			autoSell = autoSellView(session),
 			raceActive = session.race ~= nil and session.race.active == true,
 			raceId = if session.race ~= nil then session.race.raceId else nil,
 			raceMode = if session.race ~= nil then session.race.mode else nil,
@@ -444,6 +552,12 @@ function PlaySessionService.new(options)
 				generation = 0,
 			},
 			studioTools = studioTools,
+			autoSell = {
+				enabled = false,
+				maxQuality = nil,
+			},
+			sales = {},
+			soldInstances = {},
 		}
 		sessions[playerKey] = session
 
@@ -452,6 +566,7 @@ function PlaySessionService.new(options)
 			local starter, starterReason = inventory:CreateCar(playerKey, PlaySessionService.StarterModelId, 0)
 			if starter ~= nil then
 				session.selectedInstanceId = starter.InstanceId
+				discovery:record(playerKey, starter.ModelId)
 			else
 				warn("[CarForgeTax] 起始測試車建立失敗：" .. tostring(starterReason))
 			end
@@ -471,6 +586,7 @@ function PlaySessionService.new(options)
 		if session.race ~= nil and session.race.rewarded ~= true then
 			cancelUnfinished(session, session.race)
 		end
+		discovery:clear(playerKey)
 		sessions[playerKey] = nil
 	end
 
@@ -844,9 +960,39 @@ function PlaySessionService.new(options)
 			return publicState(session)
 		end
 
+		if action == "SetAutoSell" then
+			if request.enabled ~= true then
+				session.autoSell.enabled = false
+				session.autoSell.maxQuality = nil
+				return publicState(session)
+			end
+			local maxQuality = request.maxQuality
+			if AutoSellConfig.rank(maxQuality) == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.InvalidRequest,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			if maxQuality == "Legendary" and request.confirmAll ~= true then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.NeedsConfirm,
+					balance = session.wallet:GetBalance(session.key),
+					autoSell = autoSellView(session),
+				}
+			end
+			session.autoSell.enabled = true
+			session.autoSell.maxQuality = maxQuality
+			return publicState(session)
+		end
+
 		if action == "Pull" then
 			local outcome = reservedCall(session, action, token, PlaySessionService.PullInterval, function(requestId)
 				local result = session.gacha:Pull(session.key, session.rebirthLevel, requestId)
+				if result.ok == true and type(result.modelId) == "string" then
+					discovery:record(session.key, result.modelId)
+				end
 				local view = nil
 				if result.car ~= nil then
 					view = carView(session, result.car)
@@ -860,13 +1006,19 @@ function PlaySessionService.new(options)
 						qualityName = if quality ~= nil then quality.DisplayName else result.quality,
 					}
 				end
+				local sale = nil
+				if result.ok == true and result.car ~= nil then
+					sale = sellPulledCar(session, result.car, result.quality, requestId)
+				end
 				return {
 					ok = result.ok == true,
 					reason = result.reason,
 					replayed = result.replayed == true,
 					price = result.price,
-					balance = result.balance or session.wallet:GetBalance(session.key),
+					balance = if sale ~= nil then sale.balance else (result.balance or session.wallet:GetBalance(session.key)),
 					charged = result.charged == true,
+					sold = if sale ~= nil then sale.sold == true else false,
+					sellPrice = if sale ~= nil then sale.sellPrice else 0,
 					qualityId = if view ~= nil then view.qualityId else result.quality,
 					qualityName = if view ~= nil then view.qualityName else nil,
 					modelId = if view ~= nil then view.modelId else result.modelId,
@@ -874,6 +1026,7 @@ function PlaySessionService.new(options)
 					instanceId = if view ~= nil then view.instanceId else nil,
 					upgradeLevel = if view ~= nil then view.upgradeLevel else nil,
 					power = if view ~= nil then view.power else nil,
+					discovered = discovery:list(session.key),
 				}
 			end)
 			return outcome

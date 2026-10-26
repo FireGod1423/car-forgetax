@@ -210,6 +210,71 @@ local function testStudioStarterAndPull()
 	assertEqual(limited.reason, PlaySessionService.Reason.RateLimited, "頻率限制")
 	assertEqual(#calls, 2, "被限制的請求仍抽了車")
 	assertEqual(balanceOf(session), first.balance, "被限制的請求扣了金幣")
+
+	local function hasId(list, modelId: string): boolean
+		if type(list) ~= "table" then
+			return false
+		end
+		for _, item in ipairs(list) do
+			if item == modelId then
+				return true
+			end
+		end
+		return false
+	end
+	local state = service:dispatch(session.key, {
+		action = "GetState",
+	})
+	assertTrue(hasId(state.discovered, "test_common_r0"), "起始測試車沒有記入圖鑑")
+	assertEqual(#state.discovered, 1, "同一款車重複增加發現數")
+	local forged = service:dispatch(session.key, {
+		action = "Discover",
+		attemptToken = "discover-token-1",
+		modelId = "test_legendary_r0",
+	})
+	assertEqual(forged.reason, PlaySessionService.Reason.UnknownAction, "客戶端可以宣稱解鎖圖鑑")
+	state = service:dispatch(session.key, {
+		action = "GetState",
+		discovered = { "test_legendary_r0" },
+	})
+	assertEqual(#state.discovered, 1, "請求內容改寫了圖鑑")
+	assertEqual(hasId(state.discovered, "test_legendary_r0"), false, "客戶端塞進了傳說車")
+
+	local GachaSoundConfig = importShared("GachaSoundConfig")
+	assertEqual(GachaSoundConfig.tick.soundId, "rbxassetid://9119717523", "Tick 音效")
+	assertEqual(GachaSoundConfig.start.soundId, "rbxassetid://9125626478", "啟動音效")
+	assertEqual(GachaSoundConfig.lock.soundId, "rbxassetid://9116673944", "鎖定音效")
+	for _, quality in ipairs(CarConfig.getQualities()) do
+		assertTrue(GachaSoundConfig.reveal[quality.Id] ~= nil, "缺少品質揭曉音效")
+	end
+	assertTrue(GachaSoundConfig.legendaryMelody.duration >= 2 and GachaSoundConfig.legendaryMelody.duration <= 3, "傳說旋律長度")
+	assertTrue(GachaSoundConfig.legendaryMelody.soundId ~= GachaSoundConfig.reveal.Common[1].soundId, "傳說旋律與普通音相同")
+
+	now += 3
+	local catalogRng = scriptedRng({ 51, 1 })
+	local catalogService = newService()
+	local catalogSession = catalogService:createSession("catalog-player", {
+		gachaRng = catalogRng,
+	})
+	local uncommon = catalogService:dispatch(catalogSession.key, {
+		action = "Pull",
+		attemptToken = "catalog-pull-01",
+	})
+	assertEqual(uncommon.ok, true, "圖鑑測試抽車失敗")
+	assertEqual(uncommon.modelId, "test_uncommon_r0", "圖鑑測試沒有抽到優良車")
+	local catalogState = catalogService:dispatch(catalogSession.key, {
+		action = "GetState",
+	})
+	assertEqual(#catalogState.discovered, 2, "新車款沒有記入圖鑑")
+	assertEqual(hasId(catalogState.discovered, "test_common_r1"), false, "R1 車被放進發現紀錄")
+	catalogService:removeSession(catalogSession.key)
+	local returned = catalogService:createSession("catalog-player", {
+		isStudio = false,
+	})
+	local empty = catalogService:dispatch(returned.key, {
+		action = "GetState",
+	})
+	assertEqual(#empty.discovered, 0, "離線後圖鑑還在")
 	return "抽車扣 500，重複請求不雙重發車"
 end
 
@@ -262,6 +327,16 @@ local function testUpgradeRules()
 	assertEqual(destroyed.removed, true, "報廢沒有移除")
 	assertEqual(scrapSession.inventory:GetCar(scrapSession.key, scrapCar.InstanceId), nil, "報廢後車庫還看得到")
 	assertEqual(scrapSession.selectedInstanceId, nil, "報廢後仍選著已刪除的車")
+	local afterScrap = scrapService:dispatch(scrapSession.key, {
+		action = "GetState",
+	})
+	local stillKnown = false
+	for _, modelId in ipairs(afterScrap.discovered) do
+		if modelId == "test_common_r0" then
+			stillKnown = true
+		end
+	end
+	assertTrue(stillKnown, "報廢後圖鑑發現紀錄被刪掉")
 
 	local capped = scrapService:createSession("capped-player", {
 		upgradeRng = scriptedRng({}),
@@ -718,7 +793,7 @@ local function testSceneAndVisuals()
 	assertEqual(createdAgain, false, "完整場景被重建")
 	assertEqual(folder:GetAttribute("Complete"), true, "場景未完成")
 	assertTrue(folder:FindFirstChild("PlayerSpawn") ~= nil, "沒有出生點")
-	assertTrue(folder:FindFirstChild("GachaMachine") ~= nil, "沒有抽車機")
+	assertEqual(folder:FindFirstChild("GachaMachine"), nil, "舊抽車機還在")
 	assertTrue(folder:FindFirstChild("UpgradeBench") ~= nil, "沒有強化工作台")
 	local bossGate = folder:FindFirstChild("BossGate")
 	assertTrue(bossGate ~= nil, "Boss 入口模型被刪除")
@@ -729,10 +804,42 @@ local function testSceneAndVisuals()
 	assertTrue(garageSign ~= nil, "車庫展示被刪除")
 	assertEqual(garageSign:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "車庫展示台仍有互動入口")
 	assertTrue(folder:FindFirstChild("GaragePad1") ~= nil, "沒有車庫展示位")
-	local gachaPrompt = folder:FindFirstChild("GachaMachine"):FindFirstChildWhichIsA("ProximityPrompt", true)
+	local dealer = folder:FindFirstChild("R0Dealer")
+	assertTrue(dealer ~= nil and dealer:FindFirstChild("LaoPo", true) ~= nil, "沒有老破")
+	assertTrue(dealer:FindFirstChild("PriceSign", true) ~= nil, "沒有價格牌")
+	local dealerPrompts = 0
+	local dealerPrompt = nil
+	for _, descendant in ipairs(dealer:GetDescendants()) do
+		if descendant:IsA("ProximityPrompt") then
+			dealerPrompts += 1
+			dealerPrompt = descendant
+		end
+	end
+	assertEqual(dealerPrompts, 1, "車商互動入口不是一個")
+	assertEqual(dealerPrompt.KeyboardKeyCode, Enum.KeyCode.E, "車商不是按 E")
+	assertEqual(dealerPrompt.Parent:GetAttribute("Station"), "R0Dealer", "車商站點不對")
+	local npc = dealer:FindFirstChild("LaoPo", true)
+	local npcHeight = npc:GetExtentsSize().Y
+	assertTrue(npcHeight >= 5 and npcHeight <= 6, "老破身高不在 5～6：" .. tostring(npcHeight))
+	local lowest = math.huge
+	for _, descendant in ipairs(npc:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			local bottom = descendant.Position.Y - descendant.Size.Y * 0.5
+			if bottom < lowest then
+				lowest = bottom
+			end
+		end
+	end
+	assertTrue(math.abs(lowest - 0.8) <= 0.08, "老破腳沒有貼地：" .. tostring(lowest))
+	local dealerCount = 0
+	for _, child in ipairs(folder:GetChildren()) do
+		if child.Name == "R0Dealer" then
+			dealerCount += 1
+		end
+	end
+	assertEqual(dealerCount, 1, "重複建立了車商")
 	local upgradePrompt = folder:FindFirstChild("UpgradeBench"):FindFirstChildWhichIsA("ProximityPrompt", true)
 	local racePrompt = folder:FindFirstChild("RaceKiosk"):FindFirstChildWhichIsA("ProximityPrompt", true)
-	assertTrue(gachaPrompt ~= nil, "抽車機沒有互動")
 	assertTrue(upgradePrompt ~= nil, "強化台沒有互動")
 	assertTrue(racePrompt ~= nil, "競速入口沒有互動")
 	assertEqual(racePrompt.ActionText, "開啟競速", "競速入口不該直接開賽")
@@ -816,6 +923,233 @@ local function testSceneAndVisuals()
 	return "場景可重複建立，玩具車尺寸與顏色正確"
 end
 
+local function hasModel(list, modelId: string): boolean
+	if type(list) ~= "table" then
+		return false
+	end
+	for _, value in ipairs(list) do
+		if value == modelId then
+			return true
+		end
+	end
+	return false
+end
+
+local function testAutoSell()
+	local AutoSellConfig = importShared("AutoSellConfig")
+	now = 32000
+	local service = newService()
+	local session = service:createSession("sell-player", {
+		gachaRng = scriptedRng({ 1, 1, 1, 1, 51, 1, 100, 1, 96, 1, 100, 1 }),
+	})
+	local starterId = session.selectedInstanceId
+	local state = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(state.autoSell.enabled, false, "自動販賣預設不是關閉")
+	local tampered = service:dispatch(session.key, {
+		action = "GetState",
+		autoSell = { enabled = true, maxQuality = "Legendary" },
+		price = 1,
+	})
+	assertEqual(tampered.autoSell.enabled, false, "客戶端改寫了自動販賣")
+
+	local before = balanceOf(session)
+	local kept = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-off",
+	})
+	assertEqual(kept.ok, true, "關閉時抽車失敗")
+	assertEqual(kept.sold, false, "關閉時自動賣掉")
+	assertEqual(kept.balance, before - 500, "關閉時金額")
+	assertEqual(#session.inventory:ListCars(session.key), 2, "關閉時新車不在車庫")
+	assertTrue(session.inventory:GetCar(session.key, kept.instanceId) ~= nil, "關閉時的車被刪掉")
+
+	local priced = service:dispatch(session.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-set-common",
+		enabled = true,
+		maxQuality = "Common",
+		price = 999999,
+		sellPrice = 1,
+	})
+	assertEqual(priced.ok, true, "不能設定普通以下")
+	assertEqual(priced.autoSell.maxQuality, "Common", "設定被改成其他品質")
+	assertEqual(AutoSellConfig.price(0, "Common"), 100, "普通售價")
+
+	now += 3
+	local common = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-common",
+	})
+	assertEqual(common.sold, true, "普通車沒有賣出")
+	assertEqual(common.qualityId, "Common", "賣出後抽車結果被換成別的品質")
+	assertEqual(common.modelId, "test_common_r0", "賣出後車款被換掉")
+	assertEqual(common.sellPrice, 100, "客戶端指定了售價")
+	assertEqual(common.balance, priced.balance - 400, "普通車淨支出不是 400")
+	assertEqual(session.inventory:GetCar(session.key, common.instanceId), nil, "賣掉的車還在車庫")
+	assertEqual(#session.inventory:ListCars(session.key), 2, "其他車輛被一起賣掉")
+	assertTrue(hasModel(common.discovered, "test_common_r0"), "賣掉後圖鑑沒有普通車")
+
+	local replay = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-common",
+	})
+	assertEqual(replay.replayed, true, "同一請求沒有視為重送")
+	assertEqual(replay.balance, common.balance, "重送又入帳")
+	assertEqual(replay.sold, true, "重送把出售狀態弄丟")
+	assertEqual(replay.modelId, common.modelId, "重送改了抽車結果")
+	assertEqual(#session.inventory:ListCars(session.key), 2, "重送又刪了一台車")
+
+	now += 3
+	local uncommon = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-uncommon",
+	})
+	assertEqual(uncommon.sold, false, "普通以下賣掉了優良車")
+	assertEqual(uncommon.qualityId, "Uncommon", "優良車結果不對")
+	assertEqual(uncommon.balance, common.balance - 500, "保留的車仍退了錢")
+	assertTrue(session.inventory:GetCar(session.key, uncommon.instanceId) ~= nil, "保留的優良車不在車庫")
+
+	local epicSet = service:dispatch(session.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-set-epic",
+		enabled = true,
+		maxQuality = "Epic",
+	})
+	assertEqual(epicSet.autoSell.maxQuality, "Epic", "沒有改成史詩以下")
+	now += 3
+	local legendary = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-legendary-keep",
+	})
+	assertEqual(legendary.sold, false, "史詩以下賣掉了傳說")
+	assertEqual(legendary.qualityId, "Legendary", "傳說結果被換掉")
+	assertEqual(legendary.balance, epicSet.balance - 500, "保留傳說時金額不對")
+	assertTrue(session.inventory:GetCar(session.key, legendary.instanceId) ~= nil, "傳說沒有留在車庫")
+	assertTrue(hasModel(legendary.discovered, "test_legendary_r0"), "傳說沒有記入圖鑑")
+
+	now += 3
+	local epic = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-epic",
+	})
+	assertEqual(epic.sold, true, "史詩車沒有賣出")
+	assertEqual(epic.qualityId, "Epic", "史詩結果被換掉")
+	assertEqual(epic.modelId, "test_epic_r0", "史詩車款不對")
+	assertEqual(epic.sellPrice, 650, "史詩售價不對")
+	assertEqual(epic.balance, legendary.balance - 500 + 650, "史詩回收金額不對")
+	assertEqual(session.inventory:GetCar(session.key, epic.instanceId), nil, "史詩車還在車庫")
+	assertTrue(hasModel(epic.discovered, "test_epic_r0"), "賣掉的史詩沒有留在圖鑑")
+	assertTrue(session.inventory:GetCar(session.key, legendary.instanceId) ~= nil, "先前的傳說被一起賣掉")
+	assertTrue(session.inventory:GetCar(session.key, kept.instanceId) ~= nil, "原先持有的車被賣掉")
+	assertTrue(session.inventory:GetCar(session.key, starterId) ~= nil, "起始測試車被賣掉")
+
+	local denied = service:dispatch(session.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-all-denied",
+		enabled = true,
+		maxQuality = "Legendary",
+		confirmAll = false,
+		price = 1,
+	})
+	assertEqual(denied.reason, PlaySessionService.Reason.NeedsConfirm, "所有品質沒有要求確認")
+	assertEqual(denied.autoSell.maxQuality, "Epic", "未確認卻改成所有品質")
+
+	local armed = service:dispatch(session.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-all",
+		enabled = true,
+		maxQuality = "Legendary",
+		confirmAll = true,
+		sellPrice = 999999,
+	})
+	assertEqual(armed.autoSell.enabled, true, "確認後沒有啟用")
+	assertEqual(armed.autoSell.maxQuality, "Legendary", "確認後品質不對")
+	now += 3
+	local soldLegendary = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "sell-legendary",
+	})
+	assertEqual(soldLegendary.sold, true, "所有品質沒有賣掉傳說")
+	assertEqual(soldLegendary.qualityId, "Legendary", "傳說出售後結果被換掉")
+	assertEqual(soldLegendary.sellPrice, 2000, "傳說售價不對")
+	assertEqual(soldLegendary.balance, armed.balance - 500 + 2000, "傳說回收金額不對")
+	assertEqual(session.inventory:GetCar(session.key, soldLegendary.instanceId), nil, "已售傳說還在車庫")
+	assertTrue(hasModel(soldLegendary.discovered, "test_legendary_r0"), "已售傳說從圖鑑消失")
+	assertTrue(session.inventory:GetCar(session.key, legendary.instanceId) ~= nil, "舊的傳說被自動賣掉")
+
+	local direct = service:dispatch(session.key, {
+		action = "SellCar",
+		attemptToken = "sell-direct",
+		instanceId = kept.instanceId,
+		price = 100,
+	})
+	assertEqual(direct.reason, PlaySessionService.Reason.UnknownAction, "客戶端可以直接賣車")
+	assertTrue(session.inventory:GetCar(session.key, kept.instanceId) ~= nil, "直接賣車把舊車刪了")
+
+	service:removeSession(session.key)
+	local returned = service:createSession(session.key)
+	local reset = service:dispatch(returned.key, { action = "GetState" })
+	assertEqual(reset.autoSell.enabled, false, "離線後仍保留自動販賣")
+
+	now = 36000
+	local raceService = newService()
+	local racer = raceService:createSession("race-sell-player", {
+		gachaRng = scriptedRng({ 1, 1 }),
+	})
+	local starterId = racer.selectedInstanceId
+	local started = raceService:dispatch(racer.key, {
+		action = "StartAutoRace",
+		attemptToken = "sell-race",
+	})
+	assertEqual(started.ok, true, "競速沒有開始")
+	raceService:dispatch(racer.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-race-setting",
+		enabled = true,
+		maxQuality = "Legendary",
+		confirmAll = true,
+	})
+	now += 3
+	local during = raceService:dispatch(racer.key, {
+		action = "Pull",
+		attemptToken = "sell-during-race",
+	})
+	assertEqual(during.sold, true, "新抽到的普通車沒有賣")
+	assertEqual(during.sellPrice, 100, "競速中的新車售價不對")
+	assertTrue(racer.inventory:GetCar(racer.key, starterId) ~= nil, "競速中的車被賣掉")
+	assertEqual(started.lockedInstanceId or started.autoInstanceId, starterId, "鎖定的不是參賽車")
+	local upgrade = raceService:dispatch(racer.key, {
+		action = "Upgrade",
+		attemptToken = "sell-upgrade-racing",
+		instanceId = starterId,
+	})
+	assertEqual(upgrade.reason, PlaySessionService.Reason.CarRacing, "參賽車可以被改動")
+
+	now = 38000
+	local dry = PlaySessionService.new({
+		isStudio = false,
+		clock = function()
+			return now
+		end,
+	})
+	local broke = dry:createSession("broke-sell-player")
+	dry:dispatch(broke.key, {
+		action = "SetAutoSell",
+		attemptToken = "broke-setting",
+		enabled = true,
+		maxQuality = "Common",
+	})
+	local failed = dry:dispatch(broke.key, {
+		action = "Pull",
+		attemptToken = "broke-pull",
+	})
+	assertEqual(failed.reason, "InsufficientGold", "沒金幣仍抽到車")
+	assertEqual(failed.sold, false, "沒抽到車卻販賣")
+	assertEqual(balanceOf(broke), 0, "失敗抽車產生金幣")
+	assertEqual(#broke.inventory:ListCars(broke.key), 0, "失敗抽車產生車輛")
+	return "自動販賣只處理新抽到的車，售價與重送都由伺服器決定"
+end
+
 function Tests.run()
 	local cases = {
 		{ "競速時間、短圈與 Boss 緩速", testRaceMath },
@@ -826,6 +1160,7 @@ function Tests.run()
 		{ "Boss、所有權與拒絕加金幣", testBossAndOwnership },
 		{ "正式環境不發測試資源", testLiveServerHasNoTestGrant },
 		{ "場景與玩具車模型", testSceneAndVisuals },
+		{ "自動販賣", testAutoSell },
 	}
 
 	local results = {}

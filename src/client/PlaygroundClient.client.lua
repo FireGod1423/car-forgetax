@@ -28,6 +28,7 @@ local REASONS = {
 	InvalidPlayer = "玩家資料尚未建立。",
 	InternalError = "伺服器處理失敗。",
 	BossDisabled = "機械暴君目前未開放。",
+	NeedsConfirm = "連傳說一起自動販賣需要再確認一次。",
 	CarRacing = "這台車正在參賽，不能強化或報廢。",
 }
 
@@ -138,25 +139,33 @@ local function refresh()
 end
 
 local function pull()
-	if busy then
+	if busy or ui.isBusy() then
 		return
 	end
 	busy = true
+	ui.lockPull(true)
 	local result = call("Pull")
-	busy = false
 	refresh()
+	busy = false
 	if result.ok ~= true then
+		ui.lockPull(false)
 		ui.toast(reasonText(result))
 		return
 	end
-	local replay = if result.replayed == true then "（同一請求，沒有再扣款）" else ""
-	ui.toast(string.format(
-		"抽到 %s　%s　花費 %s 測試金幣%s",
-		tostring(result.qualityName),
-		tostring(result.displayName),
-		tostring(result.price),
-		replay
-	))
+	ui.playPull(result, function()
+		if result.sold == true then
+			ui.toast(string.format("已自動販賣，獲得 %s 金幣", tostring(result.sellPrice)))
+			return
+		end
+		local replay = if result.replayed == true then "（同一請求，沒有再扣款）" else ""
+		ui.toast(string.format(
+			"抽到 %s　%s　花費 %s 測試金幣%s",
+			tostring(result.qualityName),
+			tostring(result.displayName),
+			tostring(result.price),
+			replay
+		))
+	end)
 end
 
 	local function upgrade(instanceId)
@@ -253,6 +262,17 @@ ui = GarageUI.mount(playerGui, {
 		refreshGarageModels(result)
 	end,
 	onPull = pull,
+	onAutoSell = function(enabled, maxQuality, confirmAll)
+		local result = call("SetAutoSell", {
+			enabled = enabled == true,
+			maxQuality = maxQuality,
+			confirmAll = confirmAll == true,
+		})
+		refresh()
+		if result.ok ~= true then
+			ui.toast(reasonText(result))
+		end
+	end,
 	onUpgrade = upgrade,
 	onAutoStart = function(instanceId)
 		startAuto(instanceId)
@@ -271,7 +291,7 @@ local function bindPrompts(playground: Instance)
 					return
 				end
 				local station = descendant.Parent and descendant.Parent:GetAttribute("Station")
-				if station == "GachaMachine" then
+				if station == "R0Dealer" then
 					ui.open("gacha")
 				elseif station == "UpgradeBench" then
 					ui.open("upgrade")

@@ -8,6 +8,7 @@ local UpgradeConfig = require(sharedFolder:WaitForChild("UpgradeConfig"))
 local CarConfig = require(sharedFolder:WaitForChild("CarConfig"))
 local RaceConfig = require(sharedFolder:WaitForChild("RaceConfig"))
 local CarVisualFactory = require(sharedFolder:WaitForChild("CarVisualFactory"))
+local GachaBoard = require(script.Parent:WaitForChild("GachaBoard"))
 
 local GarageUI = {}
 
@@ -286,13 +287,8 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	garageDetail.Name = "Detail"
 	garageDetail.ZIndex = 4
 
-	local gachaPanel, gachaClose = shell("GachaPanel", "抽車")
-	local gachaDetail = label(gachaPanel, 18)
-	gachaDetail.Name = "Detail"
-	gachaDetail.ZIndex = 4
-	local pullButton = button(gachaPanel, "抽車", ORANGE, UDim2.fromOffset(180, 44))
-	pullButton.Name = "PullButton"
-	pullButton.ZIndex = 5
+	local gachaPanel, gachaClose = shell("GachaPanel", "老破的二手車攤")
+	local gachaBoard = GachaBoard.mount(gachaPanel)
 
 	local upgradePanel, upgradeClose = shell("UpgradePanel", "強化")
 	local upgradeList = makeList(upgradePanel, "CarList")
@@ -526,8 +522,17 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			panelSize = UDim2.fromOffset(440, math.clamp(height - 140, 420, 680))
 		end
 		for _, panel in pairs(panels) do
-			panel.Position = panelPosition
-			panel.Size = panelSize
+			if panel == gachaPanel then
+				local gachaWidth = math.clamp(width - 48, 560, 820)
+				local gachaHeight = math.clamp(height - 72, 560, 700)
+				panel.AnchorPoint = Vector2.new(0.5, 0.5)
+				panel.Position = UDim2.new(0.5, 0, 0.5, 8)
+				panel.Size = UDim2.fromOffset(gachaWidth, gachaHeight)
+			else
+				panel.AnchorPoint = Vector2.new(0, 0)
+				panel.Position = panelPosition
+				panel.Size = panelSize
+			end
 		end
 		garageList.Position = UDim2.fromOffset(16, 56)
 		garageList.Size = UDim2.new(1, -32, 0.28, -16)
@@ -536,11 +541,6 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		garageDetail.Position = UDim2.new(0, 16, 0.76, 44)
 		garageDetail.Size = UDim2.new(1, -32, 0.24, -52)
 		framePreview()
-
-		gachaDetail.Position = UDim2.fromOffset(16, 64)
-		gachaDetail.Size = UDim2.new(1, -32, 0, 140)
-		pullButton.Position = UDim2.fromOffset(16, 214)
-		pullButton.Size = UDim2.new(1, -32, 0, 44)
 
 		upgradeList.Position = UDim2.fromOffset(16, 56)
 		upgradeList.Size = UDim2.new(1, -32, 0.46, -24)
@@ -585,7 +585,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		local singleRace = state ~= nil and state.raceActive == true and not autoBusy
 
 		if selected == nil then
-			garageDetail.Text = "還沒有車輛。到場景裡的抽車機花費測試金幣取得第一台車。"
+			garageDetail.Text = "還沒有車輛。到老破的二手車攤花費測試金幣取得第一台車。"
 		else
 			garageDetail.Text = string.format(
 				"%s\n%s　%s　強化 +%d　性能 %s\n點選列表會把這台車設為競速用車。",
@@ -602,12 +602,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			end
 		end, "車庫是空的")
 		showPreview(selected)
-
-		gachaDetail.Text = string.format(
-			"單抽 %d 測試金幣。\n品質、車款與重生階級都由伺服器決定，這個面板不能指定結果。\n抽到的車會進入伺服器車庫。",
-			CarConfig.SinglePullPrice
-		)
-		pullButton.Text = string.format("抽車 %d", CarConfig.SinglePullPrice)
+		gachaBoard.update(state)
 
 		if upgradeNotice == "scrap" and upgradeCar == nil then
 			upgradeDetail.Text = "汽車已報廢，請重新選擇汽車。"
@@ -733,6 +728,9 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		for pageName, panel in pairs(panels) do
 			panel.Visible = pageName == nextPage
 		end
+		if nextPage == "gacha" then
+			gachaBoard.onOpen()
+		end
 		render()
 	end
 
@@ -741,6 +739,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		for _, panel in pairs(panels) do
 			panel.Visible = false
 		end
+		gachaBoard.dismiss()
 		render()
 	end
 
@@ -765,6 +764,24 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		task.delay(0.28, function()
 			flash.BackgroundTransparency = 1
 		end)
+	end
+
+	function api.lockPull(nextLocked: boolean)
+		gachaBoard.setLocked(nextLocked == true)
+	end
+
+	function api.playPull(result, onDone)
+		gachaBoard.setLocked(true)
+		gachaBoard.play(result, function()
+			gachaBoard.setLocked(false)
+			if onDone ~= nil then
+				onDone()
+			end
+		end)
+	end
+
+	function api.isBusy(): boolean
+		return gachaBoard.isBusy()
 	end
 
 	function api.setUpgradePending(pending: boolean)
@@ -794,9 +811,14 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	gachaClose.MouseButton1Click:Connect(api.close)
 	upgradeClose.MouseButton1Click:Connect(api.close)
 	raceClose.MouseButton1Click:Connect(api.close)
-	pullButton.MouseButton1Click:Connect(function()
+	gachaBoard.setPullHandler(function()
 		if handlers.onPull ~= nil then
 			handlers.onPull()
+		end
+	end)
+	gachaBoard.setAutoSellHandler(function(enabled, maxQuality, confirmAll)
+		if handlers.onAutoSell ~= nil then
+			handlers.onAutoSell(enabled, maxQuality, confirmAll)
 		end
 	end)
 	upgradeButton.MouseButton1Click:Connect(function()
