@@ -72,9 +72,11 @@ local function scriptedRng(values)
 	return rng, calls
 end
 
-local function newService(presenter)
+local function newService(presenter, options)
+	options = options or {}
 	return PlaySessionService.new({
 		isStudio = true,
+		bossEnabled = options.bossEnabled == true,
 		clock = function()
 			return now
 		end,
@@ -311,11 +313,38 @@ end
 local function testBossAndOwnership()
 	now = 20000
 	finishes = {}
+	local blocked = newService()
+	local blockedSession = blocked:createSession("boss-blocked")
+	local beforeBlock = balanceOf(blockedSession)
+	local rejected = blocked:dispatch(blockedSession.key, {
+		action = "StartBoss",
+		attemptToken = "boss-blocked-01",
+		duration = 1,
+		reward = 99999,
+		won = true,
+	})
+	assertEqual(rejected.ok, false, "玩家仍可開始 Boss")
+	assertEqual(rejected.reason, PlaySessionService.Reason.BossDisabled, "Boss 停用應回傳 BossDisabled，而不是演算法失敗")
+	assertEqual(balanceOf(blockedSession), beforeBlock, "被拒絕的 Boss 改變了金幣")
+	local blockedState = blocked:dispatch(blockedSession.key, {
+		action = "GetState",
+	})
+	assertEqual(blockedState.raceActive, false, "被拒絕的 Boss 仍進入比賽")
+	local stillRaces = blocked:dispatch(blockedSession.key, {
+		action = "StartRace",
+		attemptToken = "after-boss-block",
+	})
+	assertEqual(stillRaces.ok, true, "停用 Boss 後不能開始普通競速")
+	assertEqual(stillRaces.mode, "race", "普通競速被當成 Boss")
+
+	finishes = {}
 	local poses = {}
 	local service = newService({
 		onRaceStepped = function(raceId, pose)
 			poses[raceId] = pose
 		end,
+	}, {
+		bossEnabled = true,
 	})
 	local weak = service:createSession("boss-weak")
 	local weakStart = service:dispatch(weak.key, {
@@ -389,7 +418,7 @@ local function testBossAndOwnership()
 		reward = 99999,
 	}).reason, PlaySessionService.Reason.UnknownAction, "客戶端可以申報完賽")
 	assertEqual(balanceOf(thief), thiefBefore, "非法操作改變了金幣")
-	return "Boss 勝負與車輛所有權由伺服器決定"
+	return "玩家 Remote 不能開 Boss；演算法、勝負與車輛所有權仍由伺服器決定"
 end
 
 local function testLiveServerHasNoTestGrant()
@@ -432,8 +461,22 @@ local function testSceneAndVisuals()
 	assertTrue(folder:FindFirstChild("PlayerSpawn") ~= nil, "沒有出生點")
 	assertTrue(folder:FindFirstChild("GachaMachine") ~= nil, "沒有抽車機")
 	assertTrue(folder:FindFirstChild("UpgradeBench") ~= nil, "沒有強化工作台")
-	assertTrue(folder:FindFirstChild("BossGate") ~= nil, "沒有 Boss 入口")
+	local bossGate = folder:FindFirstChild("BossGate")
+	assertTrue(bossGate ~= nil, "Boss 入口模型被刪除")
+	assertEqual(bossGate:GetAttribute("Hidden"), true, "Boss 入口沒有隱藏")
+	assertEqual(bossGate.Transparency, 1, "Boss 入口仍然看得到")
+	assertEqual(bossGate:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "Boss 入口仍可互動")
+	local garageSign = folder:FindFirstChild("GarageSign")
+	assertTrue(garageSign ~= nil, "車庫展示被刪除")
+	assertEqual(garageSign:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "車庫展示台仍有互動入口")
 	assertTrue(folder:FindFirstChild("GaragePad1") ~= nil, "沒有車庫展示位")
+	local gachaPrompt = folder:FindFirstChild("GachaMachine"):FindFirstChildWhichIsA("ProximityPrompt", true)
+	local upgradePrompt = folder:FindFirstChild("UpgradeBench"):FindFirstChildWhichIsA("ProximityPrompt", true)
+	local racePrompt = folder:FindFirstChild("RaceKiosk"):FindFirstChildWhichIsA("ProximityPrompt", true)
+	assertTrue(gachaPrompt ~= nil, "抽車機沒有互動")
+	assertTrue(upgradePrompt ~= nil, "強化台沒有互動")
+	assertTrue(racePrompt ~= nil, "競速入口沒有互動")
+	assertEqual(racePrompt.ActionText, "開啟競速", "競速入口不該直接開賽")
 	assertTrue(folder:FindFirstChild("RaceStart", true) ~= nil, "沒有起點")
 	assertTrue(folder:FindFirstChild("RaceFinish", true) ~= nil, "沒有終點")
 	local displays = 0

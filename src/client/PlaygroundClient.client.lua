@@ -1,7 +1,7 @@
 -- 客戶端只送請求與顯示結果。品質、等級、完賽時間和獎金都由伺服器決定。
+-- 競速不改玩家鏡頭、不鎖 CameraSubject，也不移動角色。
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
@@ -27,12 +27,12 @@ local REASONS = {
 	NoUnlockedModel = "這個品質目前沒有可取得的車。",
 	InvalidPlayer = "玩家資料尚未建立。",
 	InternalError = "伺服器處理失敗。",
+	BossDisabled = "機械暴君目前未開放。",
 }
 
 local racing = false
 local busy = false
 local raceId = nil
-local savedCameraType = Enum.CameraType.Custom
 
 local function reasonText(result): string
 	if type(result) ~= "table" then
@@ -158,7 +158,6 @@ local function pull()
 		tostring(result.price),
 		replay
 	))
-	ui.open("garage")
 end
 
 local function upgrade(instanceId)
@@ -191,45 +190,35 @@ local function upgrade(instanceId)
 	))
 end
 
-local function startMode(action: string, instanceId, pageName: string)
+local function startRace(instanceId)
 	if racing or busy then
 		ui.toast("已經有一場競速在進行。")
 		return
 	end
 	racing = true
-	local result = call(action, {
+	local result = call("StartRace", {
 		instanceId = instanceId,
 	})
 	if result.ok ~= true then
 		racing = false
 		ui.toast(reasonText(result))
-		ui.open(pageName)
+		ui.open("race")
 		return
 	end
 	raceId = result.raceId
-	local camera = workspace.CurrentCamera
-	if camera ~= nil then
-		savedCameraType = camera.CameraType
-		camera.CameraType = Enum.CameraType.Scriptable
-	end
-	local label = if action == "StartBoss" then "挑戰機械暴君" else "自動競速"
-	ui.setRacing(true, string.format("%s進行中，伺服器時間 %.1f 秒", label, result.duration or 0))
+	ui.setRacing(true, string.format("單場競速進行中，伺服器時間 %.1f 秒", result.duration or 0))
 	if result.replayed == true then
-		ui.toast(label .. "已在進行，沒有再開始一場，也不會因此多領獎勵。")
+		ui.toast("這場競速已在進行，沒有再開始一場，也不會因此多領獎勵。")
 	else
-		ui.toast(label .. "開始。請看賽道上的玩具車，獎勵會在伺服器計算完成後發放。")
+		ui.toast("單場競速開始。請看賽道上的玩具車，獎勵會在伺服器計算完成後發放。")
 	end
 	local watchedId = result.raceId
 	task.delay((result.duration or 40) + 3, function()
 		if racing == true and raceId == watchedId then
 			racing = false
 			raceId = nil
-			local currentCamera = workspace.CurrentCamera
-			if currentCamera ~= nil then
-				currentCamera.CameraType = savedCameraType or Enum.CameraType.Custom
-			end
 			ui.setRacing(false)
-			ui.toast("沒有收到伺服器完賽結果，已恢復鏡頭。金幣不會因此補發。")
+			ui.toast("沒有收到伺服器完賽結果。金幣不會因此補發。")
 		end
 	end)
 end
@@ -250,10 +239,7 @@ ui = GarageUI.mount(playerGui, {
 	onPull = pull,
 	onUpgrade = upgrade,
 	onRace = function(instanceId)
-		startMode("StartRace", instanceId, "garage")
-	end,
-	onBoss = function(instanceId)
-		startMode("StartBoss", instanceId, "boss")
+		startRace(instanceId)
 	end,
 })
 
@@ -270,25 +256,39 @@ local function bindPrompts(playground: Instance)
 					ui.open("gacha")
 				elseif station == "UpgradeBench" then
 					ui.open("upgrade")
-				elseif station == "BossGate" then
-					ui.open("boss")
-					startMode("StartBoss", nil, "boss")
 				elseif station == "RaceKiosk" then
-					startMode("StartRace", nil, "garage")
-				else
-					ui.open("garage")
+					ui.open("race")
 				end
 			end)
 		end
 	end
 end
 
-local playground = workspace:WaitForChild("CarForgeTaxPlayground", 30)
-playground:WaitForChild("GaragePad1", 30)
-bindPrompts(playground)
-playground.DescendantAdded:Connect(function(descendant)
-	if descendant:IsA("ProximityPrompt") then
-		bindPrompts(playground)
+local function attachPlayground(playground: Instance)
+	if playground:GetAttribute("ClientBound") == true then
+		return
+	end
+	playground:SetAttribute("ClientBound", true)
+	playground:WaitForChild("GaragePad1", 30)
+	if playground.Parent == nil then
+		return
+	end
+	bindPrompts(playground)
+	playground.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("ProximityPrompt") then
+			bindPrompts(playground)
+		end
+	end)
+	refresh()
+end
+
+local existingPlayground = workspace:FindFirstChild("CarForgeTaxPlayground")
+if existingPlayground ~= nil then
+	task.spawn(attachPlayground, existingPlayground)
+end
+workspace.ChildAdded:Connect(function(child)
+	if child.Name == "CarForgeTaxPlayground" then
+		task.spawn(attachPlayground, child)
 	end
 end)
 
@@ -298,10 +298,6 @@ finishedEvent.OnClientEvent:Connect(function(payload)
 	end
 	racing = false
 	raceId = nil
-	local camera = workspace.CurrentCamera
-	if camera ~= nil then
-		camera.CameraType = savedCameraType or Enum.CameraType.Custom
-	end
 	ui.setRacing(false)
 	refresh()
 	if payload.mode == "boss" then
@@ -320,32 +316,4 @@ finishedEvent.OnClientEvent:Connect(function(payload)
 			tostring(payload.reward or 0)
 		))
 	end
-	ui.open("garage")
 end)
-
-RunService.RenderStepped:Connect(function()
-	if racing ~= true or raceId == nil then
-		return
-	end
-	local folder = workspace:FindFirstChild("CarForgeTaxPlayground")
-	local races = if folder ~= nil then folder:FindFirstChild("ActiveRaces") else nil
-	if races == nil then
-		return
-	end
-	local target = nil
-	for _, child in ipairs(races:GetChildren()) do
-		if child:GetAttribute("RaceId") == raceId then
-			target = child
-			break
-		end
-	end
-	local camera = workspace.CurrentCamera
-	local root = if target ~= nil then target.PrimaryPart else nil
-	if camera == nil or root == nil then
-		return
-	end
-	local focus = root.Position
-	camera.CFrame = CFrame.lookAt(focus + Vector3.new(-14, 8, 12), focus)
-end)
-
-refresh()

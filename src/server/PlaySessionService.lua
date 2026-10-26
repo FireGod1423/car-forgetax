@@ -41,6 +41,7 @@ PlaySessionService.Reason = table.freeze({
 	NoSelectedCar = "NoSelectedCar",
 	RaceInProgress = "RaceInProgress",
 	InvalidPower = "InvalidPower",
+	BossDisabled = "BossDisabled",
 })
 
 local ACTIONS = {
@@ -77,6 +78,8 @@ function PlaySessionService.new(options)
 	options = options or {}
 	local clock = options.clock or os.clock
 	local isStudio = options.isStudio == true
+	-- 玩家流程預設關閉。演算法仍留在 beginRace，測試或日後重開時才把 bossEnabled 設為 true。
+	local bossEnabled = options.bossEnabled == true
 	local presenter = options.presenter
 	local notify = options.notify
 	local sessions = {}
@@ -621,7 +624,21 @@ function PlaySessionService.new(options)
 		if action == "StartRace" then
 			return beginRace(session, "race", request, token)
 		end
-		return beginRace(session, "boss", request, token)
+		if action == "StartBoss" then
+			if bossEnabled ~= true then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.BossDisabled,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			return beginRace(session, "boss", request, token)
+		end
+		return {
+			ok = false,
+			reason = PlaySessionService.Reason.UnknownAction,
+			balance = session.wallet:GetBalance(session.key),
+		}
 	end
 
 	return service

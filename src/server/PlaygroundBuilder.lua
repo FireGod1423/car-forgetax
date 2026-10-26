@@ -14,6 +14,8 @@ local CarVisualFactory = importShared("CarVisualFactory")
 local PlaygroundBuilder = {}
 
 PlaygroundBuilder.FolderName = "CarForgeTaxPlayground"
+-- 場景結構有變時提高版本，已完成的舊場景才會重建。
+PlaygroundBuilder.Version = 2
 
 local ORANGE = Color3.fromRGB(255, 122, 28)
 local ORANGE_DARK = Color3.fromRGB(196, 78, 16)
@@ -223,7 +225,10 @@ end
 
 function PlaygroundBuilder.build(parent: Instance)
 	local existing = parent:FindFirstChild(PlaygroundBuilder.FolderName)
-	if existing ~= nil and existing:GetAttribute("Complete") == true then
+	if existing ~= nil
+		and existing:GetAttribute("Complete") == true
+		and existing:GetAttribute("BuildVersion") == PlaygroundBuilder.Version
+	then
 		return existing, false
 	end
 	if existing ~= nil then
@@ -277,19 +282,34 @@ function PlaygroundBuilder.build(parent: Instance)
 		collide = false,
 	})
 	caption(garageSign, "車庫展示", 2.2)
-	prompt(garageSign, "打開車庫", "車庫")
-	garageSign:SetAttribute("Station", "Garage")
+	garageSign:SetAttribute("Station", "GarageDisplay")
 
 	kiosk(folder, "GachaMachine", Vector3.new(-28, 3.3, -18), ORANGE, "抽車機", "抽車")
 	kiosk(folder, "UpgradeBench", Vector3.new(-28, 3.3, 16), Color3.fromRGB(255, 186, 64), "強化工作台", "強化")
-	kiosk(folder, "RaceKiosk", Vector3.new(12, 3.3, 16), Color3.fromRGB(255, 132, 48), "自動競速", "開始競速")
-	kiosk(folder, "BossGate", Vector3.new(12, 3.3, -16), Color3.fromRGB(92, 104, 122), "機械暴君", "挑戰 Boss")
+	kiosk(folder, "RaceKiosk", Vector3.new(12, 3.3, 16), Color3.fromRGB(255, 132, 48), "競速", "開啟競速")
+	-- 模型留著，方便以後加回提示。現在沒有 ProximityPrompt，玩家看不到也按不到。
+	local bossGate = part({
+		name = "BossGate",
+		size = Vector3.new(6, 5, 4),
+		cframe = CFrame.new(12, 3.3, -16),
+		color = Color3.fromRGB(92, 104, 122),
+		parent = folder,
+		collide = false,
+		query = false,
+	})
+	bossGate.Transparency = 1
+	bossGate.CastShadow = false
+	bossGate.CanTouch = false
+	bossGate:SetAttribute("Station", "BossGate")
+	bossGate:SetAttribute("Hidden", true)
+	bossGate:SetAttribute("PlayerStartEnabled", false)
 
 	local races = Instance.new("Folder")
 	races.Name = "ActiveRaces"
 	races.Parent = folder
 
 	buildTrack(folder)
+	folder:SetAttribute("BuildVersion", PlaygroundBuilder.Version)
 	folder:SetAttribute("Complete", true)
 	folder.Parent = parent
 	return folder, true

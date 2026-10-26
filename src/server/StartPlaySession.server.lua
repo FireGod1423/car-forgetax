@@ -40,6 +40,7 @@ local playersByKey = {}
 local boundPlayers = {}
 local service = PlaySessionService.new({
 	isStudio = RunService:IsStudio(),
+	-- 不傳 bossEnabled。客戶端的 StartBoss 會被伺服器拒絕。
 	presenter = PlaygroundPresenter.new(),
 	notify = function(playerKey, payload)
 		local player = playersByKey[playerKey]

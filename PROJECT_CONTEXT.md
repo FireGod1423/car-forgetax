@@ -20,15 +20,15 @@
 
 - 車輛資料、抽車機率、記憶體車庫、測試錢包、免費強化。
 - 程式生成的 3D 玩具車與概念場景。
-- 車庫、抽車、強化、單場競速與 Boss 測試都已接到 Remote。
+- 車庫、抽車、強化、單場競速與 Boss 演算法都已接到既有服務。
 - 單場競速：玩家按一次，伺服器跑完一場、發一次測試金幣，然後停止。沒有自動連續比賽。
+- 任務 03.1：車庫、抽車、強化、競速分成獨立面板；車庫是左側固定按鈕；競速不再強制切換鏡頭；Boss 入口已隱藏，玩家不能從 GUI 或 Remote 開始 Boss。
 
-尚未實作，下一階段才做，不要在文件或程式裡標成已完成：
+尚未實作，不要在文件或程式裡標成已完成：
 
-- GUI 分離、左側固定車庫按鈕、抽車動畫。
-- 自動連續競速，以及參賽車鎖定。
+- 任務 03.2：背景自動競速。尚未實作。現在仍是單場，結束後不會自己開下一場，也沒有停止循環的按鈕。參賽中的車仍可被強化或報廢。
+- 抽車動畫。
 - 縮短賽道與競速視覺改善。
-- 隱藏 Boss 入口。目前 Boss 入口和挑戰流程仍然開著。
 
 還沒有的正式系統：DataStore、正式經濟、重生流程、保護券背包、多人競賽、Robux。不要替這些系統發明規則。
 
@@ -213,9 +213,11 @@
 
 ### 地圖
 
-`PlaygroundBuilder.build(parent)` 在場景外組好 `CarForgeTaxPlayground`，設好 `Complete` 後才放進 `Workspace`。已完成的同名資料夾不會重建。`BuildPlayground.server.lua` 與 `StartPlaySession.server.lua` 都會呼叫它。玩家加入時只設定出生點，不重建地圖。
+`PlaygroundBuilder.build(parent)` 在場景外組好 `CarForgeTaxPlayground`，設好 `Complete` 與 `BuildVersion` 後才放進 `Workspace`。同名資料夾只有在 `Complete` 為真且 `BuildVersion` 等於 `PlaygroundBuilder.Version` 時才沿用；版本目前是 2。`BuildPlayground.server.lua` 與 `StartPlaySession.server.lua` 都會呼叫它。玩家加入時只設定出生點，不重建地圖。
 
-場景含出生區、五台展示車、抽車機、強化工作台、車庫告示與八個展示台座、競速入口、Boss 入口「機械暴君」，以及橘色高架賽道。賽道有直線、垂直迴圈、跳台和終點。賽道長度約 176 studs：直線 48、迴圈圓周、迴圈後 24、跳台參數 20、終點 34。原點是 `(36, 5, 0)`。
+場景含出生區、五台展示車、抽車機、強化工作台、車庫告示與八個展示台座、競速入口，以及橘色高架賽道。賽道有直線、垂直迴圈、跳台和終點。賽道長度約 176 studs：直線 48、迴圈圓周、迴圈後 24、跳台參數 20、終點 34。原點是 `(36, 5, 0)`。
+
+`BossGate` 模型仍在，供以後重新啟用。它完全透明、不能碰撞，也沒有 `ProximityPrompt`。`GarageSign` 只做展示，站名是 `GarageDisplay`，沒有互動入口。競速入口標題是「競速」，提示文字是「開啟競速」。
 
 展示車標記 `DisplayOnly`，不會寫進車庫。
 
@@ -227,21 +229,23 @@
 
 ### GUI
 
-目前全部混在 `src/client/GarageUI.lua` 的同一個 `ScreenGui`。頁面有車庫、抽車、強化、Boss。同一個面板裡有抽車、強化、開始競速、挑戰 Boss 按鈕。開啟按鈕在畫面右上角，文字是「車庫」，不是左側固定按鈕。
+任務 03.1 已把功能拆開。`src/client/GarageUI.lua` 只建立一個 `ScreenGui`，名稱 `CarForgeTaxInterface`。裡面有四個獨立面板：`GaragePanel`、`GachaPanel`、`UpgradePanel`、`RacePanel`。同一時間只顯示一個。關閉面板不會中斷競速，也不會鎖滑鼠或鍵盤。
 
-`PlaygroundClient.client.lua` 負責 Remote、提示、世界車庫模型，以及競速時把 `workspace.CurrentCamera.CameraType` 設成 `Scriptable` 並跟著參賽車。完賽或逾時後改回原本鏡頭。
+車庫按鈕固定在畫面左側，名稱 `GarageButton`，含簡易車形與「車庫」文字。再點一次或按關閉可收起。車庫面板顯示車輛、品質、強化等級、性能，並保留 ViewportFrame 的 3D 預覽。那個預覽相機不是玩家鏡頭。點選車輛會呼叫 `SelectCar`。
+
+抽車、強化、競速面板只放自己的操作。抽車仍讀 `CarConfig.SinglePullPrice`。強化仍用 `UpgradeConfig` 顯示五種真實機率，並保留閃光。競速面板可選車、開始單場、查看狀態，並用小型 `RaceBanner` 顯示進行中。沒有 Boss 按鈕，也沒有抽車動畫。
+
+`PlaygroundClient.client.lua` 負責 Remote、提示與世界車庫模型。競速期間不改 `CameraType`、不改 `CameraSubject`、不改寫 `Camera.CFrame`，也不移動或焊接角色。
 
 地圖 `ProximityPrompt`：
 
 | Station | 現況 |
 |---|---|
-| `GachaMachine` | 打開混合 GUI 的抽車頁 |
-| `UpgradeBench` | 打開混合 GUI 的強化頁 |
-| `RaceKiosk` | 立刻開始單場競速 |
-| `BossGate` | 打開 Boss 頁並立刻開始 Boss 賽 |
-| `Garage` | 打開車庫頁。地圖上仍有車庫入口 |
-
-沒有抽車動畫。結果只用文字提示和既有的強化閃光。
+| `GachaMachine` | 只打開抽車面板 |
+| `UpgradeBench` | 只打開強化面板 |
+| `RaceKiosk` | 只打開競速面板，不會立刻開賽 |
+| `BossGate` | 已隱藏，沒有提示 |
+| `GarageDisplay` | 只展示，沒有提示 |
 
 ### Remote
 
@@ -251,6 +255,8 @@
 - `RaceFinished`：`RemoteEvent`。只由伺服器 `FireClient`。伺服器若收到客戶端觸發，只警告，不發錢。
 
 允許的 action：`GetState`、`Pull`、`Upgrade`、`SelectCar`、`StartRace`、`StartBoss`。其他 action，包括 `Credit`、`GrantTestGold`、`FinishRace`，回 `UnknownAction`，不改餘額。
+
+玩家流程裡的 `StartBoss` 會回 `BossDisabled`，不開賽、不發錢。`PlaySessionService.new` 只有在伺服器建構選項 `bossEnabled == true` 時才會進入 Boss 演算法。`StartPlaySession.server.lua` 不傳這個選項。演算法、`RaceConfig` 的 Boss 參數與測試都保留。
 
 客戶端的 `attemptToken` 只作為重送鍵。伺服器自己產生 `Pull:n` 這類 requestId，再交給既有抽車或強化服務。同一 token 重送會得到 `replayed = true`，不會再扣款或再發車。抽車最短間隔 1.5 秒，強化 0.75 秒。客戶端指定的品質、車款、重生、價格、結果、獎金、完賽時間都會被忽略。
 
@@ -262,7 +268,7 @@
 
 玩家離線時 `removeSession` 把尚未發獎的比賽標成 `cancelled`，接著刪除 session，不會再發這場的測試金幣。
 
-角色沒有被焊上玩具車，也沒有坐進 Seat。`StartPlaySession` 只在加入與重生時把 `HumanoidRootPart` 移到出生點。競速期間客戶端會強制切換並跟隨鏡頭。參賽中的車沒有鎖定，仍可被強化或報廢。
+角色沒有被焊上玩具車，也沒有坐進 Seat。`StartPlaySession` 只在加入與重生時把 `HumanoidRootPart` 移到出生點。競速期間客戶端不切換、不跟隨鏡頭。參賽中的車沒有鎖定，仍可被強化或報廢。任務 03.2 的背景自動競速尚未實作。
 
 `RaceConfig`：
 
@@ -309,7 +315,9 @@
 
 ## 已通過的測試
 
-2026-10-27，在已開啟的 `car-forgetax.rbxl` 按 Play。這次交接沒有再跑一輪 Play，以下是同一次原型開發裡最後一次 Studio 結果。停止 Play 只會回到 Edit，不會改磁碟檔。
+2026-10-27，任務 03.1 完成後在已開啟的 `car-forgetax.rbxl` 按 Play。停止 Play 只會回到 Edit，不會改磁碟檔。
+
+這一輪三組測試都是 0 FAIL：抽車與車庫 11 PASS，強化 17 PASS，概念原型 7 PASS。原型測試同時覆蓋「玩家 `StartBoss` 回 `BossDisabled`」與「`bossEnabled` 時 Boss 演算法仍可判定勝負」。Play 裡左側車庫可開關；抽車、強化、競速各自開自己的面板。單抽後 50000 變成 49500。另一台車強化 +0 到 +1，性能 110，金幣不變。單場 40 秒完賽後再加 180，餘額 49680。競速開始、走路、關面板、完賽與重生後，鏡頭都維持 `Custom`，主體是玩家 Humanoid。兩次玩家 `StartBoss` 都被拒絕。
 
 抽車與車庫：11 PASS / 0 FAIL。一萬次模擬使用引擎隨機數，容差是 5 個標準差：普通 4949（±250）、優良 3040（±230）、稀有 1514（±179）、史詩 391（±98）、傳說 106（±50）。
 
@@ -323,17 +331,12 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 
 ## 已知問題
 
-這些問題這次不修，下一個 Agent 再處理。
+任務 03.1 已處理 GUI 分離、強制鏡頭與玩家可觸發的 Boss。下面這些仍在，下一個 Agent 再處理。
 
-- 車庫、抽車、強化、競速、Boss 共用一個 GUI。
-- 車庫按鈕在右上角，地圖上還有車庫入口。
-- 競速會把玩家鏡頭切成 `Scriptable` 並跟隨玩具車。
-- 角色沒有被焊接或坐下，但鏡頭鎖定會干擾自由移動。
+- 任務 03.2 背景自動競速尚未實作。只有單場競速，沒有自動連續比賽，也沒有停止循環的按鈕。
 - 正在比賽的車仍可被強化或報廢。
-- 只有單場競速，沒有自動連續比賽，也沒有停止循環的按鈕。
 - 賽道約 176 studs，一場要 20 到 40 秒，方塊軌道的速度感不足。
 - 抽車沒有動畫。
-- Boss 入口、GUI 按鈕和 `StartBoss` 都還開著。
 - 重生階級固定為 0。性能用取得時的 `AcquiredRebirth`。
 - 保護券沒有道具背包。
 - 一萬次模擬是統計容差。冪等快取只在該伺服器行程的記憶體裡。
@@ -346,31 +349,33 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 - 保護券背包、特殊能力、`ModelAsset` 正式資源。
 - 重生流程。目前只有加成表、車款 `UnlockRebirth`，以及伺服器固定傳入的 0。
 - 多人競賽與 Robux。
-- 下面「下一階段待開發需求」的全部項目。
+- 任務 03.2 背景自動競速，以及下面尚未完成的賽道、抽車動畫項目。任務 03.1 已完成。
 
 ## 下一階段待開發需求
 
-以下全部尚未實作。不要把它們寫成已完成功能。
+任務 03.1 已完成。任務 03.2 與後面的項目尚未實作，不要把它們寫成已完成功能。
 
-### 1. GUI 分離
+### 任務 03.1（已完成）
 
 - 抽車機器留在場景裡，打開獨立抽車 GUI。
 - 強化工作台留在場景裡，打開獨立強化 GUI。
 - 競速入口留在場景裡，打開獨立競速 GUI。
 - 車庫取消地圖互動入口，改成畫面左側固定按鈕。
-- 不要再把這些功能放進同一個 GUI。
+- 這些功能不再放進同一個操作面板。
+- 競速不強制切換或跟隨鏡頭，角色可自由移動。
+- Boss 入口已隱藏，玩家 `StartBoss` 會被伺服器拒絕。演算法與測試保留。
 
-### 2. 自動競速重構
+### 任務 03.2：背景自動競速（尚未實作）
 
-- 玩家可選擇一台自己的車參加競速。
+- 玩家可選擇一台自己的車參加競速。選擇競速車已經有了，連續比賽還沒有。
 - 啟動後自動連續比賽，每場結束就開始下一場，中間不用再手動按開始。
 - 玩家可以隨時停止自動競速。
-- 競速時角色可以自由移動。
-- 不得把角色綁定、焊接或強制坐上玩具車。
-- 不得強制鎖定或切換玩家鏡頭。
+- 競速時角色可以自由移動。這項已在 03.1 達成，03.2 要保持。
+- 不得把角色綁定、焊接或強制坐上玩具車。目前已遵守，03.2 要保持。
+- 不得強制鎖定或切換玩家鏡頭。這項已在 03.1 達成，03.2 要保持。
 - 玩家可以同時抽車，或強化其他汽車、管理車庫。
-- 正在參賽的汽車不可被強化或報廢。
-- 賽道上必須顯示這場真正參賽的 3D 玩具車。
+- 正在參賽的汽車不可被強化或報廢。目前還沒有這道鎖。
+- 賽道上必須顯示這場真正參賽的 3D 玩具車。單場已經會顯示，連續比賽時也要維持。
 - 伺服器負責比賽結果和金幣發放。
 - 玩家離線後不得繼續發放在線獎勵。
 
@@ -389,10 +394,10 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 - 展示抽中的車輛和品質。
 - 動畫不可改到 `CarConfig` 的抽車機率，也不可讓客戶端指定結果。
 
-### 5. Boss 系統
+### 5. Boss 系統（03.1 已停用玩家入口）
 
-- 下一階段不繼續開發 Boss。
-- 隱藏 Boss 入口，並停用玩家可觸發的 Boss 流程。
+- 不再繼續開發 Boss 玩法。
+- Boss 入口已隱藏，玩家從 GUI 或 Remote 開始 Boss 會被拒絕。
 - 保留現有 `StartBoss`、`RaceConfig` 的 Boss 參數和測試，供以後使用。
 
 沿用 `CarCatalog`、`CarInventoryService`、`CarGachaService`、`CarUpgradeService` 和 `CarConfig`。不要另寫一套抽車或強化演算法，也不要改既有機率與性能公式。視覺化只能顯示伺服器車庫已有的車。不要覆蓋 `car-forgetax.rbxl`。
@@ -403,7 +408,8 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 - Studio 開啟場所時會產生 `car-forgetax.rbxl.lock`，這個檔不要提交。
 - 免費強化系統在 `6d3e77d`，訊息是 `Implement free car upgrade system`。
 - 上一份交接文件在 `a913f7f`，訊息是 `Add updated AI project context`。那份內容還停在原型之前。
-- 概念原型與這份更新後的交接文件要一起提交，訊息是 `Save prototype before agent handoff`。
+- 概念原型與當時的交接文件在 `de4f1d8`，訊息是 `Save prototype before agent handoff`。
+- 任務 03.1 與這份交接更新一起提交，訊息是 `Separate GUI and remove forced race camera`。
 - 不要自行 commit 或 push，除非使用者明確要求。
 - 改完 Lua 後用已連線的 Rojo 同步。驗證時在 Studio 按 Play，看 `[CarForgeTax 測試]`、`[CarForgeTax 強化測試]` 與 `[CarForgeTax 原型測試]`。
 - 停止 Play 不會刪除 `src` 裡的檔案。
