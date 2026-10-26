@@ -11,62 +11,82 @@ local CarConfig = importCarConfig()
 
 local RaceConfig = {}
 
--- 單場目標時間。最低性能對應較長時間，目前公式能到的最高性能對應較短時間。
-RaceConfig.MinDuration = 20
-RaceConfig.MaxDuration = 40
+-- 單場目標時間。普通車約 10 秒，公式上限也停在 5 秒，避免高性能車接近 0 秒。
+RaceConfig.MinDuration = 5
+RaceConfig.MaxDuration = 10
 
--- 機械暴君的固定基準。玩家完成時間必須低於這個秒數才算贏。
-RaceConfig.BossTargetTime = 35
+-- 機械暴君的固定基準。跟著縮短後的完賽時間，慢車仍輸、高階車仍贏。
+RaceConfig.BossTargetTime = 10
 RaceConfig.BossSlowStart = 0.4
 RaceConfig.BossSlowDuration = 3
 RaceConfig.BossSlowFactor = 0.8
 
 -- 測試金幣。正式經濟尚未實作，關服後會跟著錢包一起消失。
-RaceConfig.NormalReward = 180
+-- 概念版測試值。10 秒一場，所以普通獎勵從 180 改為 45，避免金幣產出直接變四倍。
+RaceConfig.NormalReward = 45
 RaceConfig.BossWinReward = 450
 RaceConfig.BossLoseReward = 0
 
+-- 短圈是視覺路線。圈數只決定展示車要繞幾圈，完賽秒數仍由 baseDuration 決定。
 RaceConfig.Layout = table.freeze({
-	originX = 36,
-	originY = 5,
-	originZ = 0,
-	width = 8,
-	radius = 8,
-	straight1 = 48,
-	afterLoop = 24,
-	jump = 20,
-	jumpHorizontal = 18,
-	jumpHeight = 5,
-	finish = 34,
+	originX = 46,
+	originY = 2.2,
+	originZ = 1,
+	width = 9,
+	straight = 22,
+	radius = 9.5,
+	visualLaps = 2,
 })
 
 local function isFiniteNumber(value: any): boolean
 	return type(value) == "number" and value == value and value > -math.huge and value < math.huge
 end
 
-function RaceConfig.loopLength(): number
-	return 2 * math.pi * RaceConfig.Layout.radius
+function RaceConfig.lapLength(): number
+	local layout = RaceConfig.Layout
+	return layout.straight * 2 + 2 * math.pi * layout.radius
 end
 
 function RaceConfig.trackLength(): number
-	local layout = RaceConfig.Layout
-	return layout.straight1 + RaceConfig.loopLength() + layout.afterLoop + layout.jump + layout.finish
+	return RaceConfig.lapLength() * RaceConfig.Layout.visualLaps
 end
 
 function RaceConfig.markers()
 	local layout = RaceConfig.Layout
-	local straightEnd = layout.straight1
-	local loopEnd = straightEnd + RaceConfig.loopLength()
-	local afterEnd = loopEnd + layout.afterLoop
-	local jumpEnd = afterEnd + layout.jump
-	local finishEnd = jumpEnd + layout.finish
+	local half = layout.straight * 0.5
+	local arc = math.pi * layout.radius
+	local startEnd = half
+	local curveEnd = startEnd + arc
+	local backEnd = curveEnd + layout.straight
+	local returnEnd = backEnd + arc
 	return {
-		straightEnd = straightEnd,
-		loopEnd = loopEnd,
-		afterEnd = afterEnd,
-		jumpEnd = jumpEnd,
-		finishEnd = finishEnd,
+		startEnd = startEnd,
+		curveEnd = curveEnd,
+		backEnd = backEnd,
+		returnEnd = returnEnd,
+		lapEnd = RaceConfig.lapLength(),
+		finishEnd = RaceConfig.trackLength(),
 	}
+end
+
+-- 起跑先慢、再拉到巡航，終點仍落在正式距離的終點。不改變完賽秒數。
+function RaceConfig.visualAlpha(alpha: number): number
+	if not isFiniteNumber(alpha) then
+		return 0
+	end
+	local progress = math.clamp(alpha, 0, 1)
+	local launch = 0.18
+	local startScale = 0.12
+	local average = 0.5 * (1 + startScale)
+	local cruise = 1 / (average * launch + (1 - launch))
+	if progress <= launch then
+		local unit = progress / launch
+		local curve = unit * unit * unit - 0.5 * unit * unit * unit * unit
+		local covered = startScale * unit + (1 - startScale) * curve
+		return cruise * launch * covered
+	end
+	local launchDistance = cruise * launch * average
+	return launchDistance + cruise * (progress - launch)
 end
 
 -- 競速換算用的性能兩端都從 CarConfig 讀，避免再寫一份性能公式。
@@ -197,99 +217,106 @@ function RaceConfig.describe(power: number, bossSlow: boolean)
 	}, nil
 end
 
-local function normalize(x: number, y: number, z: number): (number, number, number)
-	local magnitude = math.sqrt(x * x + y * y + z * z)
-	if magnitude < 1e-6 then
-		return 0, 0, 0
-	end
-	return x / magnitude, y / magnitude, z / magnitude
-end
-
-local function point(distance: number)
+-- 閉合短圈：起跑直線、外彎、回頭直線、回彎，最後衝刺直線回到起跑線。
+local function pointOnLap(distance: number)
 	local layout = RaceConfig.Layout
 	local markers = RaceConfig.markers()
-	local segment = "Finish"
+	local half = layout.straight * 0.5
+	local radius = layout.radius
+	local segment = "Start"
 	local x = 0
-	local y = 0
-	local z = 0
+	local z = -radius
+	local lookX = 1
+	local lookZ = 0
 
-	if distance <= markers.straightEnd then
-		segment = "Straight"
+	if distance <= markers.startEnd then
+		segment = "Start"
 		x = distance
-	elseif distance <= markers.loopEnd then
-		segment = "Loop"
-		local along = distance - markers.straightEnd
-		local theta = -math.pi / 2 + (along / RaceConfig.loopLength()) * math.pi * 2
-		local centerX = layout.straight1
-		local centerY = layout.radius
-		x = centerX + layout.radius * math.cos(theta)
-		y = centerY + layout.radius * math.sin(theta)
-	elseif distance <= markers.afterEnd then
+		z = -radius
+		lookX, lookZ = 1, 0
+	elseif distance <= markers.curveEnd then
+		segment = "Curve"
+		local arc = markers.curveEnd - markers.startEnd
+		local unit = if arc <= 0 then 0 else (distance - markers.startEnd) / arc
+		local theta = -math.pi / 2 + unit * math.pi
+		x = half + radius * math.cos(theta)
+		z = radius * math.sin(theta)
+		lookX = -math.sin(theta)
+		lookZ = math.cos(theta)
+	elseif distance <= markers.backEnd then
 		segment = "Straight"
-		local along = distance - markers.loopEnd
-		x = layout.straight1 + along
-	elseif distance <= markers.jumpEnd then
-		segment = "Jump"
-		local along = distance - markers.afterEnd
-		local alpha = if layout.jump <= 0 then 0 else along / layout.jump
-		x = layout.straight1 + layout.afterLoop + layout.jumpHorizontal * alpha
-		y = math.sin(math.pi * alpha) * layout.jumpHeight
+		local along = distance - markers.curveEnd
+		x = half - along
+		z = radius
+		lookX, lookZ = -1, 0
+	elseif distance <= markers.returnEnd then
+		segment = "Curve"
+		local arc = markers.returnEnd - markers.backEnd
+		local unit = if arc <= 0 then 0 else (distance - markers.backEnd) / arc
+		local theta = math.pi / 2 + unit * math.pi
+		x = -half + radius * math.cos(theta)
+		z = radius * math.sin(theta)
+		lookX = -math.sin(theta)
+		lookZ = math.cos(theta)
 	else
-		segment = "Finish"
-		local along = distance - markers.jumpEnd
-		x = layout.straight1 + layout.afterLoop + layout.jumpHorizontal + along
+		segment = "Sprint"
+		local along = distance - markers.returnEnd
+		x = -half + along
+		z = -radius
+		lookX, lookZ = 1, 0
 	end
 
+	local look = Vector3.new(lookX, 0, lookZ)
+	if look.Magnitude < 1e-6 then
+		look = Vector3.xAxis
+	else
+		look = look.Unit
+	end
+	-- 中心線保持水平。凹槽是左右肩部同時墊高，不是把整塊路面往一側翻。
 	return {
 		segment = segment,
 		x = layout.originX + x,
-		y = layout.originY + y,
+		y = layout.originY,
 		z = layout.originZ + z,
-		localX = x,
-		localY = y,
+		lookX = look.X,
+		lookY = 0,
+		lookZ = look.Z,
+		upX = 0,
+		upY = 1,
+		upZ = 0,
 	}
 end
 
--- 迴圈的車頂朝向圓心，底部才會維持正立，頂部才會翻轉。
 function RaceConfig.sample(distance: number)
 	local length = RaceConfig.trackLength()
+	local lap = RaceConfig.lapLength()
 	local clamped = distance
 	if not isFiniteNumber(clamped) then
 		clamped = 0
 	end
 	clamped = math.clamp(clamped, 0, length)
 
-	local here = point(clamped)
-	local ahead = point(math.min(length, clamped + 0.4))
-	local behind = point(math.max(0, clamped - 0.4))
-	local lookX, lookY, lookZ = normalize(ahead.x - behind.x, ahead.y - behind.y, ahead.z - behind.z)
-	if lookX == 0 and lookY == 0 and lookZ == 0 then
-		lookX = 1
-	end
-
-	local upX, upY, upZ = 0, 1, 0
-	if here.segment == "Loop" then
-		local layout = RaceConfig.Layout
-		local centerX = layout.originX + layout.straight1
-		local centerY = layout.originY + layout.radius
-		local centerZ = layout.originZ
-		upX, upY, upZ = normalize(centerX - here.x, centerY - here.y, centerZ - here.z)
-		if upX == 0 and upY == 0 and upZ == 0 then
-			upX, upY, upZ = 0, 1, 0
+	local along = 0
+	if lap > 0 then
+		along = clamped % lap
+		if clamped > 0 and along < 1e-4 then
+			along = 0
 		end
 	end
 
+	local here = pointOnLap(along)
 	return {
 		x = here.x,
 		y = here.y,
 		z = here.z,
-		lookX = lookX,
-		lookY = lookY,
-		lookZ = lookZ,
-		upX = upX,
-		upY = upY,
-		upZ = upZ,
+		lookX = here.lookX,
+		lookY = here.lookY,
+		lookZ = here.lookZ,
+		upX = here.upX,
+		upY = here.upY,
+		upZ = here.upZ,
 		segment = here.segment,
+		distance = clamped,
 	}
 end
 

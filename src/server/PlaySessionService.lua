@@ -324,7 +324,7 @@ function PlaySessionService.new(options)
 			session.auto.completed += 1
 			session.auto.earned += if type(amount) == "number" then amount else 0
 		end
-		emit("onRaceFinished", race.raceId)
+		emit("onRaceFinished", race.raceId, true)
 		releaseLane(race.lane)
 		race.lane = nil
 

@@ -102,15 +102,24 @@ local function testRaceMath()
 
 	local plain = RaceConfig.describe(minPower, false)
 	local boss = RaceConfig.describe(minPower, true)
-	assertEqual(plain.duration, 40, "普通車基準時間")
+	assertEqual(RaceConfig.MaxDuration, 10, "普通車基準時間應約 10 秒")
+	assertEqual(RaceConfig.MinDuration, 5, "最快完賽不該接近 0 秒")
+	assertEqual(RaceConfig.NormalReward, 45, "普通獎勵應為 45")
+	assertEqual(plain.duration, 10, "普通車基準時間")
+	assertEqual(plain.reward, 45, "普通車獎勵")
 	assertClose(boss.duration - plain.duration, 0.6, "緩速應多 0.6 秒")
-	assertEqual(boss.won, false, "40.6 秒不該贏過 35 秒")
+	assertEqual(boss.won, false, "10.6 秒不該贏過 10 秒")
 	assertEqual(boss.reward, RaceConfig.BossLoseReward, "落敗獎金")
 	local strong = RaceConfig.describe(maxPower, true)
 	assertEqual(strong.won, true, "最高性能應贏過 Boss")
 	assertTrue(strong.duration < RaceConfig.BossTargetTime, "勝利時間")
-	assertEqual(RaceConfig.bossVictory(35), false, "剛好 35 秒不算勝利")
-	assertEqual(RaceConfig.bossVictory(34.999), true, "低於 35 秒才勝利")
+	assertEqual(RaceConfig.bossVictory(RaceConfig.BossTargetTime), false, "剛好目標秒數不算勝利")
+	assertEqual(RaceConfig.bossVictory(RaceConfig.BossTargetTime - 0.001), true, "低於目標才勝利")
+	local legendPower = CarConfig.calculatePower(10, "Legendary", 0)
+	local legend = RaceConfig.describe(legendPower, false)
+	assertTrue(legend.duration < plain.duration, "傳說滿級沒有比普通車快")
+	assertTrue(legend.duration > RaceConfig.MinDuration, "傳說滿級被壓到最短時間")
+	assertTrue(legend.duration >= 6, "高性能車完賽時間接近 0 秒")
 
 	local length = RaceConfig.trackLength()
 	local duringSlow = boss.slow.startDistance / boss.speed + 1.5
@@ -118,19 +127,38 @@ local function testRaceMath()
 	local linear = RaceConfig.distanceAtTime(duringSlow, boss.speed, nil, length)
 	assertTrue(slowed < linear, "緩速期間行進距離沒有變短")
 
+	assertClose(RaceConfig.visualAlpha(0), 0, "視覺起跑不是從零開始")
+	assertClose(RaceConfig.visualAlpha(1), 1, "視覺終點沒有對上正式距離")
+	assertTrue(RaceConfig.visualAlpha(0.05) < 0.05, "起跑沒有先慢後快")
 	local markers = RaceConfig.markers()
-	local loop = RaceConfig.sample(markers.straightEnd + RaceConfig.loopLength() * 0.5)
-	assertEqual(loop.segment, "Loop", "迴圈段")
-	assertClose(loop.y, RaceConfig.Layout.originY + RaceConfig.Layout.radius * 2, "迴圈頂端高度")
-	local jump = RaceConfig.sample(markers.afterEnd + RaceConfig.Layout.jump * 0.5)
-	assertEqual(jump.segment, "Jump", "跳台段")
-	assertClose(jump.y, RaceConfig.Layout.originY + RaceConfig.Layout.jumpHeight, "跳台高度")
+	local curve = RaceConfig.sample((markers.startEnd + markers.curveEnd) * 0.5)
+	assertEqual(curve.segment, "Curve", "彎道段")
+	assertTrue(math.abs(curve.upX) + math.abs(curve.upZ) < 0.02, "彎道中心線被整塊翻起")
+	assertTrue(math.abs(curve.y - RaceConfig.Layout.originY) < 0.05, "賽道又被做成高跳台")
+	local lap = RaceConfig.lapLength()
+	local seamStart = RaceConfig.sample(0)
+	local seamEnd = RaceConfig.sample(lap)
+	assertClose(seamStart.x, seamEnd.x, "短圈沒有閉合")
+	assertClose(seamStart.z, seamEnd.z, "短圈沒有閉合")
+	assertTrue(seamStart.lookX * seamEnd.lookX + seamStart.lookZ * seamEnd.lookZ > 0.98, "閉合處車頭方向斷開")
+	local previous = RaceConfig.sample(0)
+	local step = lap / 48
+	for index = 1, 48 do
+		local sample = RaceConfig.sample(step * index)
+		local deltaX = sample.x - previous.x
+		local deltaZ = sample.z - previous.z
+		assertTrue(deltaX * deltaX + deltaZ * deltaZ < (step * 1.8) * (step * 1.8), "路徑在節點間跳動")
+		local heading = previous.lookX * sample.lookX + previous.lookZ * sample.lookZ
+		assertTrue(heading > 0.9, "車頭突然大轉彎")
+		previous = sample
+	end
+	assertEqual(RaceConfig.sample(length).segment, seamStart.segment, "最後一圈沒有回到終點線")
 	local weights = UpgradeConfig.getWeights(8)
 	assertEqual(weights.GreatSuccess, 1, "+8 大成功權重被改掉")
 	assertEqual(UpgradeConfig.sumWeights(9), 100, "+9 權重總和")
 	assertEqual(UpgradeConfig.getWeights(9).GreatSuccess, 0, "+9 大成功權重")
 	assertEqual(CarConfig.SinglePullPrice, 500, "抽車價格")
-	return "時間 20～40 秒，Boss 緩速生效"
+	return "普通車 10 秒、45 金幣，Boss 緩速仍生效"
 end
 
 local function testStudioStarterAndPull()
@@ -273,7 +301,7 @@ local function testRaceAuthority()
 		won = true,
 	})
 	assertEqual(started.ok, true, "競速沒有開始")
-	assertClose(started.duration, 40, "客戶端改寫了完賽時間")
+	assertClose(started.duration, 10, "客戶端改寫了完賽時間")
 	assertEqual(started.bossTarget, nil, "一般競速被當成 Boss")
 	service:advanceAll(now + started.duration - 0.05)
 	assertEqual(finishes[session.key], nil, "時間未到就發了獎勵")
@@ -363,7 +391,12 @@ local function testBossAndOwnership()
 	local linear = RaceConfig.sample(RaceConfig.distanceAtTime(sampleTime, plan.speed, nil, length))
 	local pose = poses[weakStart.raceId]
 	assertClose(pose.y, expected.y, "伺服器車輛沒有跟著緩速模擬")
-	assertTrue(math.abs(expected.y - linear.y) > 0.05 or math.abs(expected.x - linear.x) > 0.05, "緩速位置與全速相同")
+	assertTrue(
+		math.abs(expected.y - linear.y) > 0.05
+			or math.abs(expected.x - linear.x) > 0.05
+			or math.abs(expected.z - linear.z) > 0.05,
+		"緩速位置與全速相同"
+	)
 	service:advanceAll(now + weakStart.duration)
 	assertEqual(finishes[weak.key].won, false, "慢車不該獲勝")
 	assertEqual(finishes[weak.key].reward, 0, "落敗仍發了獎金")
@@ -448,7 +481,7 @@ local function testAutoRace()
 	assertEqual(first.ok, true, "自動競速沒有開始")
 	assertEqual(first.autoState, "Running", "狀態不是 Running")
 	assertEqual(first.autoRound, 1, "第一場場次")
-	assertClose(first.duration, 40, "客戶端改寫了自動競速時間")
+	assertClose(first.duration, 10, "客戶端改寫了自動競速時間")
 	local pull = service:dispatch(session.key, {
 		action = "Pull",
 		attemptToken = "auto-pull-0001",
@@ -498,12 +531,12 @@ local function testAutoRace()
 	service:advanceAll(t0 + duration * 3)
 	local midway = service:dispatch(session.key, { action = "GetState" })
 	assertEqual(midway.autoCompleted, 3, "沒有連續完成三場")
-	assertEqual(midway.autoEarned, RaceConfig.NormalReward * 3, "三場累積不是 540")
+	assertEqual(midway.autoEarned, RaceConfig.NormalReward * 3, "三場累積不是 135")
 	assertEqual(midway.autoState, "Running", "三場後循環停了")
 	assertEqual(midway.autoRound, 4, "第四場沒有自動開始")
 	assertEqual(midway.raceActive, true, "下一場沒有在跑")
 	assertEqual(balanceOf(session), before - CarConfig.SinglePullPrice + RaceConfig.NormalReward * 3, "三場加抽車後的餘額")
-	assertEqual(finishes[session.key].reward, RaceConfig.NormalReward, "單場獎金不是 180")
+	assertEqual(finishes[session.key].reward, RaceConfig.NormalReward, "單場獎金不是 45")
 	assertEqual(finishes[session.key].autoContinue, true, "伺服器沒有接下一場")
 	assertEqual(startedCount, 4, "展示車沒有每場重建")
 	assertEqual(finishedCount, 3, "完賽模型沒有清理")
@@ -703,8 +736,32 @@ local function testSceneAndVisuals()
 	assertTrue(upgradePrompt ~= nil, "強化台沒有互動")
 	assertTrue(racePrompt ~= nil, "競速入口沒有互動")
 	assertEqual(racePrompt.ActionText, "開啟競速", "競速入口不該直接開賽")
-	assertTrue(folder:FindFirstChild("RaceStart", true) ~= nil, "沒有起點")
-	assertTrue(folder:FindFirstChild("RaceFinish", true) ~= nil, "沒有終點")
+	local startLine = folder:FindFirstChild("RaceStart", true)
+	assertTrue(startLine ~= nil, "沒有起點")
+	local finishLine = folder:FindFirstChild("RaceFinish", true)
+	assertTrue(finishLine ~= nil, "沒有終點")
+	assertEqual(folder:FindFirstChild("StartSign", true), nil, "起跑文字還在")
+	assertEqual(folder:FindFirstChild("FinishSign", true), nil, "終點文字還在")
+	assertEqual(startLine:FindFirstChildWhichIsA("BillboardGui"), nil, "起點還有浮動文字")
+	assertEqual(finishLine:FindFirstChildWhichIsA("BillboardGui"), nil, "終點還有浮動文字")
+	local function cornerY(piece: BasePart, xSign: number): number
+		local half = piece.Size * 0.5
+		return (piece.CFrame * Vector3.new(xSign * half.X, half.Y, 0)).Y
+	end
+	local deck = folder:FindFirstChild("SweeperDeck7", true)
+	local leftShoulder = folder:FindFirstChild("SweeperShoulderL7", true)
+	local rightShoulder = folder:FindFirstChild("SweeperShoulderR7", true)
+	assertTrue(deck ~= nil and leftShoulder ~= nil and rightShoulder ~= nil, "彎道凹槽零件不存在")
+	local deckLeft = cornerY(deck, -1)
+	local deckRight = cornerY(deck, 1)
+	assertTrue(math.abs(deckLeft - deckRight) < 0.05, "彎道中心被做成單側屋頂")
+	local deckTop = (deckLeft + deckRight) * 0.5
+	local function topCenter(piece: BasePart): number
+		return (piece.CFrame * Vector3.new(0, piece.Size.Y * 0.5, 0)).Y
+	end
+	assertTrue(topCenter(leftShoulder) > deckTop + 0.12, "左側沒有高於槽底")
+	assertTrue(topCenter(rightShoulder) > deckTop + 0.12, "右側沒有高於槽底")
+	assertTrue(math.abs(topCenter(leftShoulder) - topCenter(rightShoulder)) < 0.05, "左右邊緣高度不一致")
 	local displays = 0
 	for _, child in ipairs(folder:GetChildren()) do
 		if child.Name == "DisplayCar" then
@@ -761,7 +818,7 @@ end
 
 function Tests.run()
 	local cases = {
-		{ "競速時間、跳台與 Boss 緩速", testRaceMath },
+		{ "競速時間、短圈與 Boss 緩速", testRaceMath },
 		{ "Studio 起始車與抽車", testStudioStarterAndPull },
 		{ "免費強化、報廢與 +10", testUpgradeRules },
 		{ "單場競速發獎", testRaceAuthority },

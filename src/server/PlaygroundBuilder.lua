@@ -15,7 +15,7 @@ local PlaygroundBuilder = {}
 
 PlaygroundBuilder.FolderName = "CarForgeTaxPlayground"
 -- 場景結構有變時提高版本，已完成的舊場景才會重建。
-PlaygroundBuilder.Version = 2
+PlaygroundBuilder.Version = 8
 
 local ORANGE = Color3.fromRGB(255, 122, 28)
 local ORANGE_DARK = Color3.fromRGB(196, 78, 16)
@@ -72,21 +72,67 @@ local function prompt(host: BasePart, actionText: string, objectText: string)
 	return interaction
 end
 
-local function lay(parent: Instance, fromDistance: number, toDistance: number, step: number, name: string, collide: boolean)
+local ROAD = Color3.fromRGB(255, 132, 28)
+local SHOULDER = Color3.fromRGB(232, 108, 20)
+local RAIL = Color3.fromRGB(196, 72, 12)
+local STRIPE = Color3.fromRGB(255, 248, 236)
+
+-- 中心是槽底。左右是水平墊高的護邊，外緣同時高於中心，不會把整塊路面往一側翻。
+local CENTER_WIDTH = 5.2
+local CURB_WIDTH = 0.62
+local DECK_THICK = 0.28
+local CURB_HEIGHT = 0.34
+
+local function roadPiece(parent: Instance, name: string, pose, length: number, width: number, height: number, yOffset: number, lateral: number, color: Color3, collide: boolean)
+	local piece = part({
+		name = name,
+		size = Vector3.new(width, height, math.max(0.4, length)),
+		cframe = CarVisualFactory.poseCFrame(pose, yOffset, lateral),
+		color = color,
+		parent = parent,
+		collide = collide,
+	})
+	piece:SetAttribute("TrackSegment", pose.segment)
+	return piece
+end
+
+local function laySpan(parent: Instance, fromDistance: number, toDistance: number, step: number, name: string)
 	local cursor = fromDistance
 	local index = 1
-	while cursor < toDistance - 0.05 do
+	while cursor < toDistance - 0.04 do
 		local nextDistance = math.min(toDistance, cursor + step)
 		local pose = RaceConfig.sample((cursor + nextDistance) * 0.5)
-		local piece = part({
-			name = string.format("%s%d", name, index),
-			size = Vector3.new(RaceConfig.Layout.width, 0.35, math.max(0.6, nextDistance - cursor + 0.15)),
-			cframe = CarVisualFactory.poseCFrame(pose, -0.05, 0),
-			color = ORANGE,
-			parent = parent,
-			collide = collide,
-		})
-		piece:SetAttribute("TrackDistance", pose.segment)
+		local length = (nextDistance - cursor) + 0.42
+		roadPiece(
+			parent,
+			string.format("%sDeck%d", name, index),
+			pose,
+			length,
+			CENTER_WIDTH,
+			DECK_THICK,
+			-DECK_THICK * 0.5,
+			0,
+			ROAD,
+			true
+		)
+		for _, side in ipairs({ -1, 1 }) do
+			local sideName = if side < 0 then "L" else "R"
+			roadPiece(
+				parent,
+				string.format("%sShoulder%s%d", name, sideName, index),
+				pose,
+				length,
+				CURB_WIDTH,
+				CURB_HEIGHT,
+				CURB_HEIGHT * 0.5 - 0.02,
+				side * (CENTER_WIDTH * 0.5 + CURB_WIDTH * 0.5 - 0.08),
+				if side < 0 then SHOULDER else RAIL,
+				true
+			)
+		end
+		if name == "Start" or name == "Sprint" or name == "Back" then
+			roadPiece(parent, string.format("%sStripe%d", name, index), pose, length * 0.9, 0.14, 0.04, 0.03, 0, STRIPE, false)
+		end
 		cursor = nextDistance
 		index += 1
 	end
@@ -121,71 +167,75 @@ local function buildTrack(parent: Instance)
 	track.Parent = parent
 
 	local markers = RaceConfig.markers()
-	lay(track, 0, markers.straightEnd, 8, "Straight", true)
-	lay(track, markers.straightEnd, markers.loopEnd, RaceConfig.loopLength() / 18, "Loop", false)
-	lay(track, markers.loopEnd, markers.afterEnd, 6, "Approach", true)
-	lay(track, markers.jumpEnd, markers.finishEnd, 8, "Finish", true)
+	local arc = markers.curveEnd - markers.startEnd
+	laySpan(track, 0, markers.startEnd, markers.startEnd, "Start")
+	laySpan(track, markers.startEnd, markers.curveEnd, arc / 24, "Sweeper")
+	laySpan(track, markers.curveEnd, markers.backEnd, markers.backEnd - markers.curveEnd, "Back")
+	laySpan(track, markers.backEnd, markers.returnEnd, arc / 24, "Return")
+	laySpan(track, markers.returnEnd, markers.lapEnd, markers.lapEnd - markers.returnEnd, "Sprint")
 
-	local jumpStart = RaceConfig.sample(markers.afterEnd)
-	local jumpEnd = RaceConfig.sample(markers.jumpEnd)
+	local line = RaceConfig.sample(0)
 	part({
-		name = "JumpRamp",
-		size = Vector3.new(RaceConfig.Layout.width, 0.35, 7),
-		cframe = CarVisualFactory.poseCFrame(jumpStart, 0.35, 0) * CFrame.Angles(math.rad(-18), 0, 0),
-		color = ORANGE_DARK,
-		parent = track,
-	})
-	part({
-		name = "LandingRamp",
-		size = Vector3.new(RaceConfig.Layout.width, 0.35, 7),
-		cframe = CarVisualFactory.poseCFrame(jumpEnd, 0.35, 0) * CFrame.Angles(math.rad(16), 0, 0),
-		color = ORANGE_DARK,
-		parent = track,
-	})
-
-	local startPose = RaceConfig.sample(0)
-	local finishPose = RaceConfig.sample(RaceConfig.trackLength())
-	local startArch = part({
 		name = "RaceStart",
-		size = Vector3.new(10, 1, 1),
-		cframe = CarVisualFactory.poseCFrame(startPose, 4.2, 0),
-		color = Color3.fromRGB(96, 230, 140),
+		size = Vector3.new(CENTER_WIDTH * 0.72, 0.05, 0.28),
+		cframe = CarVisualFactory.poseCFrame(line, 0.04, 0),
+		color = Color3.fromRGB(96, 230, 150),
 		material = Enum.Material.Neon,
 		parent = track,
 		collide = false,
 	})
-	caption(startArch, "起點", 2)
-	local finishArch = part({
-		name = "RaceFinish",
-		size = Vector3.new(10, 1, 1),
-		cframe = CarVisualFactory.poseCFrame(finishPose, 4.2, 0),
-		color = Color3.fromRGB(255, 226, 80),
-		material = Enum.Material.Neon,
-		parent = track,
-		collide = false,
-	})
-	caption(finishArch, "終點", 2)
 
-	local layout = RaceConfig.Layout
-	for index = 0, 3 do
-		local pose = RaceConfig.sample(index * 12 + 4)
+	local postEdge = CENTER_WIDTH * 0.5 + 0.2
+	local postHeight = 1.32
+	part({
+		name = "FinishPostL",
+		size = Vector3.new(0.2, postHeight, 0.2),
+		cframe = CarVisualFactory.poseCFrame(line, postHeight * 0.5, -postEdge),
+		color = ORANGE_DARK,
+		parent = track,
+		collide = false,
+	})
+	part({
+		name = "FinishPostR",
+		size = Vector3.new(0.2, postHeight, 0.2),
+		cframe = CarVisualFactory.poseCFrame(line, postHeight * 0.5, postEdge),
+		color = ORANGE_DARK,
+		parent = track,
+		collide = false,
+	})
+	part({
+		name = "RaceFinish",
+		size = Vector3.new(CENTER_WIDTH + 0.55, 0.14, 0.18),
+		cframe = CarVisualFactory.poseCFrame(line, 1.26, 0),
+		color = Color3.fromRGB(255, 226, 90),
+		material = Enum.Material.Neon,
+		parent = track,
+		collide = false,
+	})
+
+	for index = 1, 3 do
+		local pose = RaceConfig.sample(markers.lapEnd - index * 2.2)
 		part({
-			name = "Pillar" .. index,
-			size = Vector3.new(1.2, 4.2, 1.2),
-			cframe = CFrame.new(pose.x, 2.9, pose.z),
+			name = "Chevron" .. index,
+			size = Vector3.new(1.35, 0.04, 0.42),
+			cframe = CarVisualFactory.poseCFrame(pose, 0.05, 0),
+			color = Color3.fromRGB(255, 236, 170),
+			material = Enum.Material.Neon,
+			parent = track,
+			collide = false,
+		})
+	end
+
+	for index, distance in ipairs({ 4, markers.backEnd * 0.5, markers.returnEnd + 4 }) do
+		local pose = RaceConfig.sample(distance)
+		part({
+			name = "Support" .. index,
+			size = Vector3.new(0.7, 1.15, 0.7),
+			cframe = CFrame.new(pose.x, 1.35, pose.z),
 			color = ORANGE_DARK,
 			parent = track,
 		})
 	end
-	local rampStart = Vector3.new(16, 1.1, layout.originZ)
-	local rampEnd = Vector3.new(layout.originX, layout.originY, layout.originZ)
-	part({
-		name = "WatchRamp",
-		size = Vector3.new(8, 0.45, (rampEnd - rampStart).Magnitude),
-		cframe = CFrame.lookAt((rampStart + rampEnd) / 2, rampEnd),
-		color = ORANGE,
-		parent = track,
-	})
 end
 
 local function buildShowroom(parent: Instance)

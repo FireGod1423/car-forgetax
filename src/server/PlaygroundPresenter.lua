@@ -8,8 +8,12 @@ local function importShared(moduleName: string)
 end
 
 local CarVisualFactory = importShared("CarVisualFactory")
+local RaceConfig = importShared("RaceConfig")
 
 local PlaygroundPresenter = {}
+
+local WHEEL_RADIUS = 0.24
+local WHEEL_NAMES = { "WheelFL", "WheelFR", "WheelRL", "WheelRR" }
 
 local function laneOffset(lane: number): number
 	if lane == 1 then
@@ -24,9 +28,131 @@ local function laneOffset(lane: number): number
 	return 0
 end
 
+local function visualPose(pose)
+	local official = 0
+	if pose ~= nil and type(pose.distance) == "number" then
+		official = pose.distance
+	end
+	local total = RaceConfig.trackLength()
+	local alpha = 0
+	if total > 0 then
+		alpha = math.clamp(official / total, 0, 1)
+	end
+	local visualDistance = RaceConfig.visualAlpha(alpha) * total
+	return RaceConfig.sample(visualDistance), alpha, visualDistance
+end
+
+local function placeCar(model, pose, lateral: number, alpha: number, visualDistance: number, wheels)
+	local ride = 0.5 + math.sin(visualDistance * 1.25) * 0.02
+	local placed = CarVisualFactory.poseCFrame(pose, ride, lateral)
+	if alpha < 0.18 then
+		local launch = 1 - alpha / 0.18
+		placed = placed * CFrame.Angles(-0.045 * launch, 0, 0)
+	end
+	model:PivotTo(placed)
+	local spin = CFrame.Angles(visualDistance / WHEEL_RADIUS, 0, 0)
+	for _, wheel in ipairs(wheels) do
+		if wheel.part.Parent ~= nil then
+			wheel.part.CFrame = placed * wheel.rest * spin
+		end
+	end
+	return placed
+end
+
+local function attachEffects(model)
+	local body = model:FindFirstChild("Body")
+	if body == nil or not body:IsA("BasePart") then
+		return nil, nil
+	end
+
+	local rear = Instance.new("Attachment")
+	rear.Name = "LaunchAttach"
+	rear.Position = Vector3.new(0, 0.05, 1.15)
+	rear.Parent = body
+
+	local dust = Instance.new("ParticleEmitter")
+	dust.Name = "LaunchDust"
+	dust.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	dust.Rate = 28
+	dust.Lifetime = NumberRange.new(0.12, 0.22)
+	dust.Speed = NumberRange.new(2, 4)
+	dust.SpreadAngle = Vector2.new(12, 12)
+	dust.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.28),
+		NumberSequenceKeypoint.new(1, 0.05),
+	})
+	dust.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.25),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	dust.Color = ColorSequence.new(Color3.fromRGB(255, 214, 150))
+	dust.LightEmission = 0.25
+	dust.EmissionDirection = Enum.NormalId.Back
+	dust.Enabled = true
+	dust.Parent = rear
+
+	local tailA = Instance.new("Attachment")
+	tailA.Name = "TrailA"
+	tailA.Position = Vector3.new(-0.35, 0.15, 1.25)
+	tailA.Parent = body
+	local tailB = Instance.new("Attachment")
+	tailB.Name = "TrailB"
+	tailB.Position = Vector3.new(0.35, 0.15, 1.25)
+	tailB.Parent = body
+	local trail = Instance.new("Trail")
+	trail.Name = "SpeedTrail"
+	trail.Attachment0 = tailA
+	trail.Attachment1 = tailB
+	trail.Lifetime = 0.16
+	trail.MinLength = 0.04
+	trail.FaceCamera = true
+	trail.LightEmission = 0.55
+	trail.WidthScale = NumberSequence.new(0.45)
+	trail.Color = ColorSequence.new(Color3.fromRGB(255, 246, 220), Color3.fromRGB(255, 150, 40))
+	trail.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	trail.Enabled = false
+	trail.Parent = body
+	return dust, trail
+end
+
+local function finishBurst(cframe: CFrame, parent: Instance?)
+	if parent == nil then
+		return
+	end
+	local anchor = Instance.new("Part")
+	anchor.Name = "FinishBurst"
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanTouch = false
+	anchor.CanQuery = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+	anchor.CFrame = cframe
+	anchor.Parent = parent
+	local burst = Instance.new("ParticleEmitter")
+	burst.Name = "FinishSparks"
+	burst.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	burst.Rate = 0
+	burst.Lifetime = NumberRange.new(0.18, 0.35)
+	burst.Speed = NumberRange.new(3, 7)
+	burst.SpreadAngle = Vector2.new(35, 35)
+	burst.Size = NumberSequence.new(0.32, 0)
+	burst.LightEmission = 0.65
+	burst.Color = ColorSequence.new(Color3.fromRGB(255, 226, 110))
+	burst.Parent = anchor
+	burst:Emit(14)
+	game:GetService("Debris"):AddItem(anchor, 0.6)
+end
+
 function PlaygroundPresenter.new()
 	local models = {}
 	local lanes = {}
+	local wheelSets = {}
+	local dusts = {}
+	local trails = {}
 
 	local function racesFolder()
 		local playground = workspace:FindFirstChild("CarForgeTaxPlayground")
@@ -36,16 +162,25 @@ function PlaygroundPresenter.new()
 		return playground:FindFirstChild("ActiveRaces")
 	end
 
+	local function clearRace(raceId: string)
+		local model = models[raceId]
+		models[raceId] = nil
+		lanes[raceId] = nil
+		wheelSets[raceId] = nil
+		dusts[raceId] = nil
+		trails[raceId] = nil
+		if model ~= nil then
+			model:Destroy()
+		end
+	end
+
 	return {
 		onRaceStarted = function(raceId: string, spec)
 			local parent = racesFolder()
 			if parent == nil or type(raceId) ~= "string" then
 				return
 			end
-			local existing = models[raceId]
-			if existing ~= nil then
-				existing:Destroy()
-			end
+			clearRace(raceId)
 			local model = CarVisualFactory.build({
 				modelId = spec.modelId,
 				qualityId = spec.qualityId,
@@ -58,8 +193,25 @@ function PlaygroundPresenter.new()
 			model.Parent = parent
 			models[raceId] = model
 			lanes[raceId] = laneOffset(spec.lane or 0)
+
+			local wheels = {}
+			local pivot = model:GetPivot()
+			for _, name in ipairs(WHEEL_NAMES) do
+				local wheel = model:FindFirstChild(name)
+				if wheel ~= nil and wheel:IsA("BasePart") then
+					table.insert(wheels, {
+						part = wheel,
+						rest = pivot:ToObjectSpace(wheel.CFrame),
+					})
+				end
+			end
+			wheelSets[raceId] = wheels
+			local dust, trail = attachEffects(model)
+			dusts[raceId] = dust
+			trails[raceId] = trail
 			if spec.pose ~= nil then
-				model:PivotTo(CarVisualFactory.poseCFrame(spec.pose, 0.45, lanes[raceId]))
+				local pose, alpha, visualDistance = visualPose(spec.pose)
+				placeCar(model, pose, lanes[raceId], alpha, visualDistance, wheels)
 			end
 		end,
 		onRaceStepped = function(raceId: string, pose)
@@ -67,15 +219,23 @@ function PlaygroundPresenter.new()
 			if model == nil or model.Parent == nil or pose == nil then
 				return
 			end
-			model:PivotTo(CarVisualFactory.poseCFrame(pose, 0.45, lanes[raceId] or 0))
-		end,
-		onRaceFinished = function(raceId: string)
-			local model = models[raceId]
-			models[raceId] = nil
-			lanes[raceId] = nil
-			if model ~= nil then
-				model:Destroy()
+			local shown, alpha, visualDistance = visualPose(pose)
+			placeCar(model, shown, lanes[raceId] or 0, alpha, visualDistance, wheelSets[raceId] or {})
+			local dust = dusts[raceId]
+			if dust ~= nil then
+				dust.Enabled = alpha < 0.045
 			end
+			local trail = trails[raceId]
+			if trail ~= nil then
+				trail.Enabled = alpha > 0.08
+			end
+		end,
+		onRaceFinished = function(raceId: string, completed: boolean?)
+			local model = models[raceId]
+			if completed == true and model ~= nil and model.Parent ~= nil then
+				finishBurst(model:GetPivot(), racesFolder())
+			end
+			clearRace(raceId)
 		end,
 	}
 end
