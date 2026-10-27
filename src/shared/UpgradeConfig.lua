@@ -27,11 +27,11 @@ UpgradeConfig.Protection = table.freeze({
 })
 
 local outcomes = {
-	{ Id = "Destroy", DisplayName = "報廢" },
-	{ Id = "Damage", DisplayName = "損壞" },
-	{ Id = "Keep", DisplayName = "維持" },
-	{ Id = "Success", DisplayName = "成功" },
-	{ Id = "GreatSuccess", DisplayName = "大成功" },
+	{ Id = "Destroy", DisplayName = "Scrapped" },
+	{ Id = "Damage", DisplayName = "Damaged" },
+	{ Id = "Keep", DisplayName = "Unchanged" },
+	{ Id = "Success", DisplayName = "Success" },
+	{ Id = "GreatSuccess", DisplayName = "Great Success" },
 }
 
 local bands = {

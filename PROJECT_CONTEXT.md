@@ -26,8 +26,11 @@
 - 任務 03.2：背景自動競速。伺服器為每位玩家維持一個工作階段，狀態是 `Idle`、`Running`。一場結束後由伺服器自動開下一場。客戶端不會反覆呼叫 `StartRace`。目前每場發放 45 測試金幣。
 - 任務 03.2.1：停止會立刻取消未完成場次且不發獎；強化必須由玩家明確點選車輛；車庫 Viewport 預覽依模型外框放大。
 - 任務 03.3：短圈玩具賽道、左右同時墊高的內凹軌道、沿路線行駛的展示車動畫。普通車約 10 秒，完賽獎勵 45 測試金幣。起點與終點沒有文字。
-- 任務 03.4：R0 乞丐車商「老破」、獨立抽車 GUI、橫向抽車動畫、五種品質音效、車款圖鑑。舊抽車機入口已移除。
-- 任務 03.4.1：老破身高約 5.46 studs；抽車音效改為 Creator Store 可播放素材；新增依品質篩選的自動販賣。
+- 任務 03.4：R0 車商、獨立抽車 GUI、橫向抽車動畫、五種品質音效、車款圖鑑。舊抽車機入口已移除。
+- 任務 03.4.1：抽車音效改為 Creator Store 可播放素材；新增自動販賣。03.4.2 已把當時的自製放大 NPC 換成暫時的經典 Noob。
+- 任務 03.4.2：車商改名 Rusty，官方 R15 經典 Noob；廢土攤位、垃圾山、泥地與獎池告示牌；同一次伺服器行程的首次英文對話。
+- 任務 03.5：依手繪圖重製抽車 GUI。玩家看得到的介面與對話是英文。SKIP 是持久勾選，抽車冷卻 1.5 秒顯示在抽車按鈕上。
+- 自動販賣改成五種品質各自勾選。勾選只賣該品質，不會連帶勾較低品質。預設全部不勾。
 
 尚未實作，不要在文件或程式裡標成已完成：
 
@@ -86,12 +89,12 @@
 
 | ModelId | 顯示名稱 | 品質 | UnlockRebirth |
 |---|---|---|---|
-| `test_common_r0` | 普通測試車 | Common | 0 |
-| `test_uncommon_r0` | 優良測試車 | Uncommon | 0 |
-| `test_rare_r0` | 稀有測試車 | Rare | 0 |
-| `test_epic_r0` | 史詩測試車 | Epic | 0 |
-| `test_legendary_r0` | 傳說測試車 | Legendary | 0 |
-| `test_common_r1` | 一階重生測試車 | Common | 1 |
+| `test_common_r0` | Common Test Car | Common | 0 |
+| `test_uncommon_r0` | Uncommon Test Car | Uncommon | 0 |
+| `test_rare_r0` | Rare Test Car | Rare | 0 |
+| `test_epic_r0` | Epic Test Car | Epic | 0 |
+| `test_legendary_r0` | Legendary Test Car | Legendary | 0 |
+| `test_common_r1` | Rebirth 1 Test Car | Common | 1 |
 
 `AbilityId` 與 `ModelAsset` 預留但目前是 nil。同品質車型沒有額外性能欄位。
 
@@ -105,7 +108,7 @@
 
 `ReplicatedStorage.Shared.UpgradeConfig`
 
-結果 id：`Destroy`、`Damage`、`Keep`、`Success`、`GreatSuccess`。顯示名稱是報廢、損壞、維持、成功、大成功。
+結果 id：`Destroy`、`Damage`、`Keep`、`Success`、`GreatSuccess`。玩家看到的名稱是 Scrapped、Damaged、Unchanged、Success、Great Success。
 
 保護券 id：`None`、`Basic`、`Advanced`。還沒有道具背包。
 
@@ -216,13 +219,15 @@
 
 ### 地圖
 
-`PlaygroundBuilder.build(parent)` 在場景外組好 `CarForgeTaxPlayground`，設好 `Complete` 與 `BuildVersion` 後才放進 `Workspace`。同名資料夾只有在 `Complete` 為真且 `BuildVersion` 等於 `PlaygroundBuilder.Version` 時才沿用；版本目前是 10。`BuildPlayground.server.lua` 與 `StartPlaySession.server.lua` 都會呼叫它。玩家加入時只設定出生點，不重建地圖。`StartPlaySession` 的 Heartbeat 另外呼叫 `PlaygroundBuilder.stepDealer`，只讓老破輕微搖晃。
+`PlaygroundBuilder.build(parent)` 在場景外組好 `CarForgeTaxPlayground`，設好 `Complete` 與 `BuildVersion` 後才放進 `Workspace`。同名資料夾只有在 `Complete` 為真且 `BuildVersion` 等於 `PlaygroundBuilder.Version` 時才沿用；版本目前是 17。`BuildPlayground.server.lua` 與 `StartPlaySession.server.lua` 都會呼叫它。玩家加入時只設定出生點，不重建地圖。`PlaygroundBuilder.stepDealer` 仍會被 Heartbeat 呼叫，但不再移動 NPC。待機是官方 R15 idle，`rbxassetid://507766666`。
 
-場景含出生區、五台展示車、R0 乞丐車商、強化工作台、車庫告示與八個展示台座、競速入口，以及貼地的橘色短圈。沒有名為 `GachaMachine` 的抽車機。沒有垂直迴圈，也沒有跳台。路線是起跑半直線、東側彎、回頭直線、西側彎，再衝刺回同一條起終線，並重複兩圈。單圈約 104 studs，兩圈展示長度約 207 studs。原點是 `(46, 2.2, 1)`。中心線保持水平。路面中間是寬 5.2 的槽底，左右各有墊高的護邊，所以彎道是淺凹槽，不是單側屋頂。直線有白色中線。起終線有綠色起跑線、小型黃色拱門和三個白色箭頭。拱門開口高過玩具車。起點與終點都沒有「起跑」或「終點」文字，也沒有貼在賽道上的 BillboardGui。強化台和競速入口的站名仍保留。
+場景含出生區、五台展示車、R0 車商、強化工作台、車庫告示與八個展示台座、競速入口，以及貼地的橘色短圈。沒有名為 `GachaMachine` 的抽車機。沒有垂直迴圈，也沒有跳台。路線是起跑半直線、東側彎、回頭直線、西側彎，再衝刺回同一條起終線，並重複兩圈。單圈約 104 studs，兩圈展示長度約 207 studs。原點是 `(46, 2.2, 1)`。中心線保持水平。路面中間是寬 5.2 的槽底，左右各有墊高的護邊，所以彎道是淺凹槽，不是單側屋頂。直線有白色中線。起終線有綠色起跑線、小型黃色拱門和三個白色箭頭。拱門開口高過玩具車。起點與終點都沒有起跑或終點文字，也沒有貼在賽道上的 BillboardGui。強化台和競速入口的站名仍保留。
 
-R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8。NPC 模型名 `LaoPo`。頭、身體、四肢、帽子、鬍子、衣服和工具袋一起放大兩倍，鞋底貼地。帽頂到鞋底約 5.46 studs，和一般玩家角色同一級身高。旁邊有木桌、棚子、紙箱、直立舊輪胎、價格牌「500 金幣一台」和「老破的攤」。攤上的二手車仍是玩具尺寸。`ProximityPrompt` 在頭部，按 E，`Station` 是 `R0Dealer`，`MaxActivationDistance` 14。待機只上下約 0.03 studs 並輕微左右轉，不會追玩家。
+R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8。NPC 實例名仍是 `LaoPo`，顯示名稱是 Rusty，頭上名牌是 `Rusty` 與 `R0 · Wandering Dealer`。外觀是暫時的經典 Noob：黃頭、黃手臂、藍身體、綠腿，沒有配件。官方 R15 Humanoid，鞋底貼地，不追玩家。他站在攤位左前側，面朝外再斜約 24 度，位移是 `CFrame.new(-3.35, 0, -2.2) * CFrame.Angles(0, math.pi + math.rad(24), 0)`。`ProximityPrompt` 掛在頭部的 `PromptAnchor`，按 E，`ObjectText` 是 Rusty，`ActionText` 是 Check the stall，`Station` 是 `R0Dealer`，`MaxActivationDistance` 14。
 
-`BossGate` 模型仍在，供以後重新啟用。它完全透明、不能碰撞，也沒有 `ProximityPrompt`。`GarageSign` 只做展示，站名是 `GarageDisplay`，沒有互動入口。競速入口標題是「競速」，提示文字是「開啟競速」。
+攤位是四柱一棚的廢土架子，桌面上只有工具箱、托盤、扳手和油罐，沒有車，也沒有價格牌或攤名。柱外有油桶、木箱和舊輪胎。後方泥地裡有加高的垃圾山，前緣不壓到棚子。攤位周圍是分層泥地，重疊的地面不在同一個高度。泥路近端有 `PoolSign`，文字是 `NO LICENSE` / `PRIZE POOL`。這是場景裡允許的告示，不是攤位標價。
+
+`BossGate` 模型仍在，供以後重新啟用。它完全透明、不能碰撞，也沒有 `ProximityPrompt`。`GarageSign` 只做展示，站名是 `GarageDisplay`，沒有互動入口。競速入口標題是 Race，提示文字是 Open Race。
 
 展示車標記 `DisplayOnly`，不會寫進車庫。
 
@@ -236,17 +241,23 @@ R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8
 
 任務 03.1 已把功能拆開。`src/client/GarageUI.lua` 只建立一個 `ScreenGui`，名稱 `CarForgeTaxInterface`。裡面有四個獨立面板：`GaragePanel`、`GachaPanel`、`UpgradePanel`、`RacePanel`。同一時間只顯示一個。關閉面板不會中斷競速，也不會鎖滑鼠或鍵盤。
 
-車庫按鈕固定在畫面左側，名稱 `GarageButton`，含簡易車形與「車庫」文字。再點一次或按關閉可收起。車庫面板顯示車輛、品質、強化等級、性能，並保留 ViewportFrame 的 3D 預覽。那個預覽相機不是玩家鏡頭。點選車輛會呼叫 `SelectCar`。
+玩家看得到的介面、提示、對話和車名都是英文。程式註解與測試斷言文字可以是中文。
+
+車庫按鈕固定在畫面左側，名稱 `GarageButton`。再點一次或按關閉可收起。車庫面板顯示車輛、品質、強化等級、性能，並保留 ViewportFrame 的 3D 預覽。那個預覽相機不是玩家鏡頭。點選車輛會呼叫 `SelectCar`。
 
 抽車、強化、競速面板只放自己的操作。抽車仍讀 `CarConfig.SinglePullPrice`，價格仍是 500。強化仍用 `UpgradeConfig` 顯示五種真實機率，並保留閃光。沒有 Boss 按鈕。自動販賣只在抽車面板，不在強化面板。
 
-抽車面板標題是「老破的二手車攤」，由 `src/client/GachaBoard.lua` 建在既有的那一個 `ScreenGui` 裡。內容有金幣、單抽 500、抽一台車、跳過動畫、音效開關、查看機率、車款圖鑑、自動販賣設定。機率文字直接讀 `CarConfig` 權重：普通 50、優良 30、稀有 15、史詩 4、傳說 1。品質顯示名稱用 `CarConfig`，優良不是另寫的「非凡」。
+抽車面板標題是 `RUSTY'S SCRAP LOTTERY`，設計尺寸 1000×620，用名為 `FitScale` 的 UIScale 縮進視窗。由 `src/client/GachaBoard.lua` 建在既有的那一個 `ScreenGui` 裡。上半是橫向轉輪，下左是 YOUR GOLD 與 DROP RATES，中間是 COST: 500 GOLD 和 `ROLL ×1`，下右是 AUTO SELL。圖鑑是小按鈕，打開子頁。機率文字直接讀 `CarConfig` 權重：COMMON 50%、UNCOMMON 30%、RARE 15%、EPIC 4%、LEGENDARY 1%。
 
-橫向卡片動畫在伺服器回傳結果之後才播放，約 4.2 秒，由快到慢，停在中央指針。停住的卡片必須是伺服器的 `ModelId` 與品質。客戶端不會再抽一次。跳過會停在已經決定的結果，並只播一次該品質的揭曉音。關閉面板會停音效，不會停止自動競速，也不控制角色或主鏡頭。
+轉輪標題列有持久的 `SkipToggle`。預設關閉。打開之後，之後的抽車不播 42 張長條，只停在伺服器抽到的那一張，並播鎖定與揭曉音。抽到一半才勾選，會立刻跳過這次。伺服器最短間隔仍是 `PlaySessionService.PullInterval = 1.5`。按下抽車後，按鈕文字改成剩餘秒數，例如 `1.5s`，結束後回到 `ROLL ×1`。播放中、鎖定中或冷卻剩餘超過 0.05 秒時，按鈕停用。
 
-圖鑑只列 `UnlockRebirth == 0` 的五款 R0 車。已發現顯示真名、品質色和基礎性能。未發現是黑色方塊剪影、名稱「???」、標成未解鎖。圖鑑用 `ModelId`，車庫用 `InstanceId`。自動販賣把車移出車庫後，圖鑑仍保持已發現。
+橫向卡片動畫在伺服器回傳結果之後才播放。未勾 SKIP 時約 4.2 秒，由快到慢，停在中央指針。停住的卡片必須是伺服器的 `ModelId` 與品質。客戶端不會再抽一次。關閉面板會停音效，不會停止自動競速，也不控制角色或主鏡頭。
 
-自動販賣預設關閉。選項是普通以下、優良以下、稀有以下、史詩以下、所有品質。「以下」包含該品質。所有品質包含傳說，必須再按一次確認。選定後會列出會賣的品質、保留的品質和售價。動畫結束後，若伺服器回 `sold`，結果仍是原本抽到的車，並顯示「已自動販賣，獲得 XXX 金幣」。
+第一次對 Rusty 按 E，先顯示七句英文對話，最後一句才打開抽車。同一伺服器行程裡之後再按 E 會直接開抽車。對話中途離開不會記成已看過。記憶只在 `dealerIntroSeen`，由 `CompleteDealerIntro` 寫入，不是 DataStore。對話不控制角色或鏡頭，也不停止自動競速。按鈕是 Continue、Leave，最後一句是 See the stall。
+
+圖鑑只列 `UnlockRebirth == 0` 的五款 R0 車。已發現顯示真名、品質色和基礎性能。未發現是黑色方塊剪影、名稱 `???`、標成未解鎖。圖鑑用 `ModelId`，車庫用 `InstanceId`。自動販賣把車移出車庫後，圖鑑仍保持已發現。
+
+自動販賣預設五個方框都不勾，等於關閉。COMMON、UNCOMMON、RARE、EPIC、LEGENDARY 各自獨立。勾選只代表賣該品質，不會自動勾較低品質，所以可以只勾 COMMON 和 RARE。每一列顯示 SELL 或 KEEP，提示是 `Checked: sell. Empty: keep.` 狀態徽章只顯示 ON 或 OFF。勾 LEGENDARY 要再按一次確認；取消勾選立刻送出剩下的清單，取消傳說不用再確認。動畫結束後，若伺服器回 `sold`，結果仍是原本抽到的車。
 
 強化面板的選取只存在客戶端，初始是 `nil`。開啟強化面板，或從強化面板切到其他面板時，都會清掉選取。未選車時按鈕停用並顯示「請先選擇汽車」，客戶端不送 `Upgrade`。玩家點選後，說明顯示車名、品質、強化等級與 `InstanceId`，按鈕顯示「強化：車名 +等級」。成功、損壞、維持會保留該車。車輛消失時清掉選取，顯示「汽車已報廢，請重新選擇汽車」，不會自動改選下一台。參賽中與 +10 的按鈕維持停用。連點由客戶端處理中狀態擋下，伺服器仍做頻率與 `CarRacing` 驗證。
 
@@ -260,7 +271,7 @@ R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8
 
 | Station | 現況 |
 |---|---|
-| `R0Dealer` | 按 E 只打開抽車面板。舊的 `GachaMachine` 已移除 |
+| `R0Dealer` | 第一次按 E 播完對話再開抽車；同一行程之後直接開抽車。舊的 `GachaMachine` 已移除 |
 | `UpgradeBench` | 只打開強化面板 |
 | `RaceKiosk` | 只打開競速面板，不會立刻開賽 |
 | `BossGate` | 已隱藏，沒有提示 |
@@ -273,9 +284,9 @@ R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8
 - `Action`：`RemoteFunction`。客戶端只傳 `action`、可選 `attemptToken`、可選 `instanceId`。
 - `RaceFinished`：`RemoteEvent`。只由伺服器 `FireClient`。伺服器若收到客戶端觸發，只警告，不發錢。
 
-允許的 action：`GetState`、`Pull`、`Upgrade`、`SelectCar`、`StartRace`、`StartBoss`、`StartAutoRace`、`StopAutoRace`、`SetAutoSell`。其他 action，包括 `Credit`、`GrantTestGold`、`FinishRace`、`Discover`、`SellCar`，回 `UnknownAction`，不改餘額。
+允許的 action：`GetState`、`Pull`、`Upgrade`、`SelectCar`、`StartRace`、`StartBoss`、`StartAutoRace`、`StopAutoRace`、`SetAutoSell`、`CompleteDealerIntro`。其他 action，包括 `Credit`、`GrantTestGold`、`FinishRace`、`Discover`、`SellCar`，回 `UnknownAction`，不改餘額。
 
-`SetAutoSell` 只接受啟用與否、品質上限，以及所有品質時的 `confirmAll`。沒有確認就選傳說上限會回 `NeedsConfirm`，設定不變。客戶端傳的售價、金幣數量或假品質都會被忽略。售價只讀 `src/shared/AutoSellConfig.lua`。目前只有重生 0：普通 100、優良 175、稀有 300、史詩 650、傳說 2000。
+`SetAutoSell` 只接受 `qualities` 陣列，以及新勾選傳說時的 `confirmLegendary`。陣列裡每一項都必須是已知品質，長度不超過 5。空陣列代表全部不賣。缺少 `qualities`、未知品質，或舊的 `maxQuality` / `confirmAll` 而沒有合格陣列，回 `InvalidRequest`，設定不變。新加入 Legendary 且 `confirmLegendary ~= true` 時回 `NeedsConfirm`，設定不變。傳說已經在清單裡時，之後仍包含它的更新不用再確認。客戶端傳的售價、金幣數量或假品質都會被忽略。伺服器用 `AutoSellConfig.contains` 判斷該品質在不在集合裡，不再用最高品質門檻。售價只讀 `src/shared/AutoSellConfig.lua`。目前只有重生 0：Common 100、Uncommon 175、Rare 300、Epic 650、Legendary 2000。
 
 玩家流程裡的 `StartBoss` 會回 `BossDisabled`，不開賽、不發錢。`PlaySessionService.new` 只有在伺服器建構選項 `bossEnabled == true` 時才會進入 Boss 演算法。`StartPlaySession.server.lua` 不傳這個選項。演算法、`RaceConfig` 的 Boss 參數與測試都保留。
 
@@ -320,11 +331,11 @@ R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8
 
 | 品質 | 名稱 | 顏色 | 權重 | 性能加成 |
 |---|---|---|---|---|
-| Common | 普通 | 白色 | 50 | 0 |
-| Uncommon | 優良 | 綠色 | 30 | 8 |
-| Rare | 稀有 | 藍色 | 15 | 20 |
-| Epic | 史詩 | 紫色 | 4 | 38 |
-| Legendary | 傳說 | 橘色 | 1 | 65 |
+| Common | Common | White | 50 | 0 |
+| Uncommon | Uncommon | Green | 30 | 8 |
+| Rare | Rare | Blue | 15 | 20 |
+| Epic | Epic | Purple | 4 | 38 |
+| Legendary | Legendary | Orange | 1 | 65 |
 
 重生加成：R0=0、R1=12、R2=27、R3=45、R4=66、R5=90、R6=117、R7=147、R8=180、R9=216、R10=255。
 
@@ -361,11 +372,15 @@ R0 車商資料夾是 `R0Dealer`，原點 `(-28, 0.8, -18)`，地板頂面 y=0.8
 
 Tick 跟卡片經過中央指針同步。跳過只播一次揭曉。音效開關把 SoundGroup 音量設為 0 並停止播放。傳說旋律不是把電子提示音改音高。完整勝利音檔長 13.86 秒，遊戲只播開頭 2.6 秒。
 
-自動販賣只處理這次成功抽到的新車。順序是：既有抽車服務決定結果並扣 500、發車、記入圖鑑、依設定判斷、確認持有且不是參賽車、`RemoveCar` 成功後才 `Credit`。同一個抽車請求重送不會再入帳。同一個 `InstanceId` 不會第二次入帳。不會賣起始測試車、原本就有的車、強化過的車，或正在競速的車。車輛紀錄沒有品質欄位，伺服器用抽車結果的品質對圖鑑。
+自動販賣只處理這次成功抽到的新車。順序是：既有抽車服務決定結果並扣 500、發車、記入圖鑑、品質在勾選集合裡才繼續、確認持有且不是參賽車且強化等級是 0、`RemoveCar` 成功後才 `Credit`。同一個抽車請求重送不會再入帳。同一個 `InstanceId` 不會第二次入帳。不會賣起始測試車、原本就有的車、強化過的車，或正在競速的車。車輛紀錄沒有品質欄位，伺服器用抽車結果的品質對圖鑑。品質顯示名稱是 Common、Uncommon、Rare、Epic、Legendary。
 
 ## 已通過的測試
 
-2026-10-27，任務 03.4 與 03.4.1 完成後，在已開啟的 `car-forgetax.rbxl` 按 Play。停止 Play 只會回到 Edit，不會改磁碟檔。
+2026-10-28，任務 03.4.2、03.5、SKIP 與獨立自動販賣已寫進程式。使用者表示這個版本已在 Studio 親自玩過。那次遊玩沒有留下三組自動化測試的 PASS 數字，所以下面不把它記成全數通過。
+
+同一天在 Studio 外用 Lune 0.11.1 跑 `src/server/PrototypeTests.lua`。自動販賣案例通過：預設五個品質都不賣、只勾 Epic 不賣較低品質、COMMON 加 RARE 不賣中間的 Uncommon、舊的 `maxQuality` 請求被拒絕、傳說未確認時設定不變、確認後只多賣傳說、取消傳說不用再確認、清空後不賣、售價仍是 100、175、300、650、2000、重送不重複入帳、圖鑑保留已售車款、參賽中的車不賣、金幣不足不能抽。場景檢查在 Studio 外會略過。那次執行沒有 Roblox 的 `Vector3`，Boss 與所有權那一項在臨時替身下失敗，沒有回到 Studio 重跑，所以不能記成通過，也不能依此認定產品壞掉。抽車與車庫、強化兩組測試這輪沒有重跑。
+
+2026-10-27，任務 03.4 與 03.4.1 完成後，在已開啟的 `car-forgetax.rbxl` 按 Play。停止 Play 只會回到 Edit，不會改磁碟檔。下面這段是當時的中文介面與自製 NPC，不是現在的 Rusty 與英文 GUI。
 
 這一輪三組測試都是 0 FAIL，合計 37 PASS：抽車與車庫 11 PASS，強化 17 PASS，概念原型 9 PASS。原型 9 項包含原本的 8 項，另加自動販賣。自動販賣測試覆蓋預設關閉、普通淨支出 400、優良在「普通以下」時保留、史詩售出 650、未確認不能賣傳說、確認後傳說售出 2000、同一請求不重複入帳、圖鑑保留已售車款、起始車與參賽車不被賣掉、金幣不足不能抽。場景檢查確認老破身高在 5 到 6 studs、鞋底貼地、只有一個按 E 的車商提示。Play 裡玩家站在攤位旁，角色含頭髮約 5.96 studs，老破約 5.46 studs。實抽一台普通測試車後，金幣由 50000 變成 49600，結果文字是「已自動販賣，獲得 100 金幣」，車名仍是普通測試車。
 
@@ -395,18 +410,18 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 
 ## 已知問題
 
-任務 03.1、03.2、03.2.1、03.3、03.4 與 03.4.1 已處理 GUI 分離、強制鏡頭、玩家可觸發的 Boss、背景自動競速、立即停止、參賽車鎖定、強化選車、車庫預覽、短圈賽道、內凹軌道、展示車動畫、起終點文字、R0 車商、抽車動畫、圖鑑、音效與自動販賣。下面這些仍在，下一個 Agent 再處理。
+任務 03.1 到 03.5 已處理 GUI 分離、強制鏡頭、玩家可觸發的 Boss、背景自動競速、立即停止、參賽車鎖定、強化選車、車庫預覽、短圈賽道、內凹軌道、展示車動畫、起終點文字、Rusty、廢土攤位、首次對話、英文介面、抽車動畫、圖鑑、音效、SKIP、抽車冷卻與獨立自動販賣。下面這些仍在，下一個 Agent 再處理。
 
 - 卡片 Tick 使用 Pro Sound Effects 的開關聲，原檔偏小。播放音量已設為 1.6，連續喀噠仍可能比揭曉鈴聲輕。
 - 傳說旋律是 APM「Conquering Heroes Link」的前 2.6 秒，完整音檔 13.86 秒。它不是單獨製作的短勝利曲。
-- 自動販賣清單較長。較矮的視窗裡，「所有品質」可能要在設定區稍微捲動才看得到。
+- Rusty 目前是暫時的經典 Noob。官方 R15 骨架已接上，帽子和衣服之後再換，不要再放大成舊的自製零件人。
 - 車庫預覽因俯視透視，靠近鏡頭的一側會先接近畫面邊緣，所以車身大約佔預覽高度 71%。再拉近會裁到車輪。
 - 近看賽道接縫仍能看到淡淡的分段。這不改變行車路線。
 - 重生階級固定為 0。性能用取得時的 `AcquiredRebirth`。自動販賣售價目前也只有 R0。
 - 保護券沒有道具背包。
 - 圖鑑、自動販賣設定、車庫與金幣都沒有 DataStore。重進或關服後會消失，自動販賣回到關閉。
 - 一萬次模擬是統計容差。冪等快取只在該伺服器行程的記憶體裡。
-- `$ignoreUnknownInstances` 會讓檔案刪除後，Studio 裡的舊實例繼續留著。舊的 `GachaMachine` 若還留在未重建的場景裡，要把 `BuildVersion` 升過 9 才會換成車商。目前版本是 10。
+- `$ignoreUnknownInstances` 會讓檔案刪除後，Studio 裡的舊實例繼續留著。場景要換成版本 17，必須先 Stop Play 再 Play，讓 `BuildVersion` 重建。只同步 GUI 不會重蓋已經存在的舊地圖。
 - 磁碟上的 rbxl 沒有被這次開發寫入。關掉 Studio 時若不存檔，場所檔仍不含這些腳本，下次要靠 Rojo 同步。
 - Studio 既有警告：`rbxassetid://203785492` 的資源類型不符。不是這次抽車音效。
 
@@ -420,7 +435,7 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 
 ## 下一階段待開發需求
 
-任務 03.1、03.2、03.2.1、03.3、03.4 與 03.4.1 已完成。DataStore、正式重生、保護券背包、手動販賣與 Robux 尚未實作。
+任務 03.1、03.2、03.2.1、03.3、03.4、03.4.1、03.4.2 與 03.5 已完成。DataStore、正式重生、保護券背包、手動販賣與 Robux 尚未實作。Rusty's 外觀仍是暫時的 Noob。
 
 ### 任務 03.1（已完成）
 
@@ -460,15 +475,16 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 - 起點與終點不放文字。小型拱門、起跑線和箭頭保留。
 - 競速動畫不移動角色，也不強制鏡頭。競速狀態仍用既有的小型 UI。
 
-### 4. 抽車動畫、車商、圖鑑與自動販賣（03.4 與 03.4.1 已完成）
+### 4. 抽車動畫、車商、圖鑑與自動販賣（03.4 到 03.5 已完成）
 
-- 舊抽車機入口已移除。按 E 與 R0 車商「老破」互動，打開「老破的二手車攤」。
-- 老破全身等比例放大，身高約 5.46 studs，鞋底貼地。
-- 伺服器先決定抽車結果並扣 500。客戶端再播橫向卡片動畫，停在真正抽到的車。
+- 舊抽車機入口已移除。按 E 與 Rusty 互動。第一次先看七句英文對話，之後直接打開 `RUSTY'S SCRAP LOTTERY`。
+- NPC 實例名仍是 `LaoPo`。外觀是暫時的經典 Noob，官方 R15，鞋底貼地，站在攤位旁並面朝外。
+- 攤位沒有車，也沒有標價文字。後方有垃圾山和分層泥地，泥路上有 `NO LICENSE / PRIZE POOL` 告示牌。
+- 伺服器先決定抽車結果並扣 500。客戶端再播橫向卡片動畫，停在真正抽到的車。SKIP 勾選後改成只顯示結果。抽車按鈕在 1.5 秒冷卻期間顯示剩餘時間。
 - 五種品質有不同揭曉音。傳說另有金屬聲和約 2.6 秒的勝利旋律。
 - 圖鑑記錄已發現的 R0 `ModelId`。未發現顯示黑色剪影。關服後消失。
-- 自動販賣預設關閉。售價集中在 `AutoSellConfig`：普通 100、優良 175、稀有 300、史詩 650、傳說 2000。
-- 只出售剛抽到的新車。移除成功後才入帳。客戶端不能指定售價。所有品質需要額外確認。
+- 自動販賣預設五個品質都不勾。售價集中在 `AutoSellConfig`：Common 100、Uncommon 175、Rare 300、Epic 650、Legendary 2000。
+- 只出售剛抽到、而且品質在勾選集合裡的新車。不會因為勾了較高品質就賣掉較低品質。移除成功後才入帳。客戶端不能指定售價。新勾選 Legendary 需要額外確認。
 
 ### 5. Boss 系統（03.1 已停用玩家入口）
 
@@ -488,7 +504,8 @@ Studio 場景另有既有警告：`rbxassetid://203785492` 的資源類型不符
 - 任務 03.1 與當時的交接更新一起提交，訊息是 `Separate GUI and remove forced race camera`。
 - 任務 03.2、03.2.1 與當時的交接更新一起提交，訊息是 `Implement auto racing and interaction fixes`。
 - 任務 03.3 與當時的交接更新一起提交，訊息是 `Improve toy race track and racing experience`。
-- 任務 03.4、03.4.1 與這份交接更新一起提交，訊息是 `Implement R0 merchant gacha audio and auto sell`。
+- 任務 03.4、03.4.1 與當時的交接更新一起提交，訊息是 `Implement R0 merchant gacha audio and auto sell`。
+- 任務 03.4.2、03.5、SKIP、抽車冷卻、獨立自動販賣與這份交接更新一起提交，訊息是 `Improve Rusty NPC and gacha interface`。
 - 不要自行 commit 或 push，除非使用者明確要求。
 - 改完 Lua 後用已連線的 Rojo 同步。驗證時在 Studio 按 Play，看 `[CarForgeTax 測試]`、`[CarForgeTax 強化測試]` 與 `[CarForgeTax 原型測試]`。
 - 停止 Play 不會刪除 `src` 裡的檔案。

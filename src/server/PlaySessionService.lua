@@ -27,7 +27,7 @@ local CarDiscoveryService = importServer("CarDiscoveryService")
 
 local PlaySessionService = {}
 
-PlaySessionService.MemoryNotice = "關服後車庫與金幣會消失。目前是記憶體測試資料，不是正式存檔。"
+PlaySessionService.MemoryNotice = "Garage and gold vanish when the server closes. This is in-memory test data, not a real save."
 PlaySessionService.StarterModelId = "test_common_r0"
 PlaySessionService.PullInterval = 1.5
 PlaySessionService.UpgradeInterval = 0.75
@@ -65,6 +65,7 @@ local ACTIONS = {
 	StartAutoRace = true,
 	StopAutoRace = true,
 	SetAutoSell = true,
+	CompleteDealerIntro = true,
 }
 
 local function isPlayerKey(playerKey: any): boolean
@@ -208,7 +209,7 @@ function PlaySessionService.new(options)
 	end
 
 	local function autoSellView(session)
-		local setting = session.autoSell or { enabled = false, maxQuality = nil }
+		local setting = session.autoSell or { enabled = false, qualities = {} }
 		local prices = {}
 		for _, qualityId in ipairs(AutoSellConfig.Order) do
 			local quality = CarConfig.getQuality(qualityId)
@@ -218,19 +219,14 @@ function PlaySessionService.new(options)
 				price = AutoSellConfig.price(0, qualityId),
 			})
 		end
-		local sells, keeps = {}, {}
-		if setting.enabled == true and type(setting.maxQuality) == "string" then
-			sells, keeps = AutoSellConfig.split(setting.maxQuality)
-		else
-			keeps = { "Common", "Uncommon", "Rare", "Epic", "Legendary" }
-		end
+		local sells, keeps = AutoSellConfig.split(setting.qualities)
 		return {
-			enabled = setting.enabled == true,
-			maxQuality = setting.maxQuality,
+			enabled = #sells > 0,
+			qualities = sells,
 			prices = prices,
 			sells = sells,
 			keeps = keeps,
-			notice = "自動販賣設定只存在這次伺服器記憶體，重進或關服後會關閉。",
+			notice = "Auto-sell lives only in this server session. Rejoining or closing the server turns it off.",
 		}
 	end
 
@@ -247,7 +243,7 @@ function PlaySessionService.new(options)
 			balance = balance,
 		}
 		local setting = session.autoSell
-		if setting == nil or setting.enabled ~= true or type(setting.maxQuality) ~= "string" then
+		if not AutoSellConfig.contains(if setting ~= nil then setting.qualities else nil, qualityId) then
 			session.sales[requestId] = kept
 			return kept
 		end
@@ -256,10 +252,6 @@ function PlaySessionService.new(options)
 			return kept
 		end
 		if car.UpgradeLevel ~= 0 or lockedInstanceId(session) == car.InstanceId then
-			session.sales[requestId] = kept
-			return kept
-		end
-		if not AutoSellConfig.covers(setting.maxQuality, qualityId) then
 			session.sales[requestId] = kept
 			return kept
 		end
@@ -318,7 +310,9 @@ function PlaySessionService.new(options)
 			pullPrice = CarConfig.SinglePullPrice,
 			cars = listCars(session),
 			discovered = discovery:list(session.key),
-			discoveryNotice = "圖鑑只存在這次伺服器記憶體，關服後會消失。",
+			discoveryNotice = "The catalog lives only in this server session and vanishes when the server closes.",
+			dealerIntroSeen = session.dealerIntroSeen == true,
+			dealerIntroNotice = "The first conversation is remembered only for this server session. You will see it again after rejoining.",
 			autoSell = autoSellView(session),
 			raceActive = session.race ~= nil and session.race.active == true,
 			raceId = if session.race ~= nil then session.race.raceId else nil,
@@ -552,9 +546,10 @@ function PlaySessionService.new(options)
 				generation = 0,
 			},
 			studioTools = studioTools,
+			dealerIntroSeen = false,
 			autoSell = {
 				enabled = false,
-				maxQuality = nil,
+				qualities = {},
 			},
 			sales = {},
 			soldInstances = {},
@@ -930,6 +925,11 @@ function PlaySessionService.new(options)
 			return publicState(session)
 		end
 
+		if action == "CompleteDealerIntro" then
+			session.dealerIntroSeen = true
+			return publicState(session)
+		end
+
 		local token, tokenReason = normalizeToken(request.attemptToken)
 		if tokenReason ~= nil then
 			return {
@@ -961,20 +961,17 @@ function PlaySessionService.new(options)
 		end
 
 		if action == "SetAutoSell" then
-			if request.enabled ~= true then
-				session.autoSell.enabled = false
-				session.autoSell.maxQuality = nil
-				return publicState(session)
-			end
-			local maxQuality = request.maxQuality
-			if AutoSellConfig.rank(maxQuality) == nil then
+			local selected, ordered = AutoSellConfig.readList(request.qualities)
+			if selected == nil or ordered == nil then
 				return {
 					ok = false,
 					reason = PlaySessionService.Reason.InvalidRequest,
 					balance = session.wallet:GetBalance(session.key),
+					autoSell = autoSellView(session),
 				}
 			end
-			if maxQuality == "Legendary" and request.confirmAll ~= true then
+			local alreadyLegendary = AutoSellConfig.contains(session.autoSell.qualities, "Legendary")
+			if selected.Legendary == true and not alreadyLegendary and request.confirmLegendary ~= true then
 				return {
 					ok = false,
 					reason = PlaySessionService.Reason.NeedsConfirm,
@@ -982,8 +979,12 @@ function PlaySessionService.new(options)
 					autoSell = autoSellView(session),
 				}
 			end
-			session.autoSell.enabled = true
-			session.autoSell.maxQuality = maxQuality
+			local stored = {}
+			for _, qualityId in ipairs(ordered) do
+				stored[qualityId] = true
+			end
+			session.autoSell.qualities = stored
+			session.autoSell.enabled = #ordered > 0
 			return publicState(session)
 		end
 

@@ -85,11 +85,11 @@ end
 
 local function testWeights()
 	local expected = {
-		{ id = "Common", weight = 50, bonus = 0, displayName = "普通", colorName = "白色" },
-		{ id = "Uncommon", weight = 30, bonus = 8, displayName = "優良", colorName = "綠色" },
-		{ id = "Rare", weight = 15, bonus = 20, displayName = "稀有", colorName = "藍色" },
-		{ id = "Epic", weight = 4, bonus = 38, displayName = "史詩", colorName = "紫色" },
-		{ id = "Legendary", weight = 1, bonus = 65, displayName = "傳說", colorName = "橘色" },
+		{ id = "Common", weight = 50, bonus = 0, displayName = "Common", colorName = "White" },
+		{ id = "Uncommon", weight = 30, bonus = 8, displayName = "Uncommon", colorName = "Green" },
+		{ id = "Rare", weight = 15, bonus = 20, displayName = "Rare", colorName = "Blue" },
+		{ id = "Epic", weight = 4, bonus = 38, displayName = "Epic", colorName = "Purple" },
+		{ id = "Legendary", weight = 1, bonus = 65, displayName = "Legendary", colorName = "Orange" },
 	}
 
 	local qualities = CarConfig.getQualities()

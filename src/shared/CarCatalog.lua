@@ -15,37 +15,37 @@ local CarCatalog = {}
 local definitions = {
 	{
 		ModelId = "test_common_r0",
-		DisplayName = "普通測試車",
+		DisplayName = "Common Test Car",
 		Quality = "Common",
 		UnlockRebirth = 0,
 	},
 	{
 		ModelId = "test_uncommon_r0",
-		DisplayName = "優良測試車",
+		DisplayName = "Uncommon Test Car",
 		Quality = "Uncommon",
 		UnlockRebirth = 0,
 	},
 	{
 		ModelId = "test_rare_r0",
-		DisplayName = "稀有測試車",
+		DisplayName = "Rare Test Car",
 		Quality = "Rare",
 		UnlockRebirth = 0,
 	},
 	{
 		ModelId = "test_epic_r0",
-		DisplayName = "史詩測試車",
+		DisplayName = "Epic Test Car",
 		Quality = "Epic",
 		UnlockRebirth = 0,
 	},
 	{
 		ModelId = "test_legendary_r0",
-		DisplayName = "傳說測試車",
+		DisplayName = "Legendary Test Car",
 		Quality = "Legendary",
 		UnlockRebirth = 0,
 	},
 	{
 		ModelId = "test_common_r1",
-		DisplayName = "一階重生測試車",
+		DisplayName = "Rebirth 1 Test Car",
 		Quality = "Common",
 		UnlockRebirth = 1,
 	},

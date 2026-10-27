@@ -36,20 +36,36 @@ function AutoSellConfig.price(rebirthLevel: number, qualityId: string): number?
 	return PRICES_R0[qualityId]
 end
 
-function AutoSellConfig.covers(maxQuality: string, qualityId: string): boolean
-	local maxRank = AutoSellConfig.rank(maxQuality)
-	local rank = AutoSellConfig.rank(qualityId)
-	if maxRank == nil or rank == nil then
-		return false
+-- 只接受品質名稱陣列。空陣列代表全部不賣。不認識的項目整筆拒絕，避免沿用最高品質門檻。
+function AutoSellConfig.readList(value: any): ({ [string]: boolean }?, { string }?)
+	if type(value) ~= "table" then
+		return nil, nil
 	end
-	return rank <= maxRank
+	local set = {}
+	for index, qualityId in ipairs(value) do
+		if index > #ORDER or type(qualityId) ~= "string" or RANK[qualityId] == nil then
+			return nil, nil
+		end
+		set[qualityId] = true
+	end
+	local list = {}
+	for _, qualityId in ipairs(ORDER) do
+		if set[qualityId] == true then
+			table.insert(list, qualityId)
+		end
+	end
+	return set, list
 end
 
-function AutoSellConfig.split(maxQuality: string): ({ string }, { string })
+function AutoSellConfig.contains(set: any, qualityId: string): boolean
+	return type(set) == "table" and type(qualityId) == "string" and set[qualityId] == true
+end
+
+function AutoSellConfig.split(set: any): ({ string }, { string })
 	local sells = {}
 	local keeps = {}
 	for _, qualityId in ipairs(ORDER) do
-		if AutoSellConfig.covers(maxQuality, qualityId) then
+		if AutoSellConfig.contains(set, qualityId) then
 			table.insert(sells, qualityId)
 		else
 			table.insert(keeps, qualityId)

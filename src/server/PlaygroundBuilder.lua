@@ -15,7 +15,7 @@ local PlaygroundBuilder = {}
 
 PlaygroundBuilder.FolderName = "CarForgeTaxPlayground"
 -- 場景結構有變時提高版本，已完成的舊場景才會重建。
-PlaygroundBuilder.Version = 10
+PlaygroundBuilder.Version = 17
 
 local ORANGE = Color3.fromRGB(255, 122, 28)
 local ORANGE_DARK = Color3.fromRGB(196, 78, 16)
@@ -60,7 +60,7 @@ local function caption(host: BasePart, text: string, offsetY: number?)
 	billboard.Parent = host
 end
 
-local function prompt(host: BasePart, actionText: string, objectText: string)
+local function prompt(host: Instance, actionText: string, objectText: string)
 	local interaction = Instance.new("ProximityPrompt")
 	interaction.ActionText = actionText
 	interaction.ObjectText = objectText
@@ -238,144 +238,315 @@ local function buildTrack(parent: Instance)
 	end
 end
 
-local function priceSign(host: BasePart, text: string)
-	local gui = Instance.new("SurfaceGui")
-	gui.Name = "Caption"
-	gui.Face = Enum.NormalId.Front
-	gui.PixelsPerStud = 70
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.LightInfluence = 0
-	gui.Parent = host
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Size = UDim2.fromScale(1, 1)
-	label.Font = Enum.Font.GothamBold
-	label.Text = text
-	label.TextColor3 = Color3.fromRGB(255, 244, 220)
-	label.TextScaled = true
-	label.Parent = gui
+-- Roblox 預設 R15 待機。這是官方 Animate 使用的 idle，不是自製搖晃。
+local MERCHANT_IDLE = "rbxassetid://507766666"
+
+local function playMerchantIdle(npc: Model)
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if humanoid == nil then
+		return
+	end
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if animator == nil then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	local animation = npc:FindFirstChild("MerchantIdle")
+	if animation == nil or not animation:IsA("Animation") then
+		animation = Instance.new("Animation")
+		animation.Name = "MerchantIdle"
+		animation.Parent = npc
+	end
+	animation.AnimationId = MERCHANT_IDLE
+	local ok, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	if ok and track ~= nil then
+		track.Looped = true
+		track.Priority = Enum.AnimationPriority.Idle
+		track:Play()
+	end
+end
+
+local function merchantNameplate(head: BasePart)
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "Nameplate"
+	billboard.Size = UDim2.fromOffset(180, 52)
+	billboard.StudsOffset = Vector3.new(0, 2.35, 0)
+	billboard.MaxDistance = 48
+	billboard.LightInfluence = 0
+	billboard.Parent = head
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "NpcName"
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Size = UDim2.new(1, 0, 0.58, 0)
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.Text = "Rusty"
+	nameLabel.TextColor3 = Color3.new(1, 1, 1)
+	nameLabel.TextStrokeTransparency = 0.45
+	nameLabel.TextScaled = true
+	nameLabel.Parent = billboard
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Name = "NpcTitle"
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Position = UDim2.new(0, 0, 0.56, 0)
+	titleLabel.Size = UDim2.new(1, 0, 0.44, 0)
+	titleLabel.Font = Enum.Font.GothamMedium
+	titleLabel.Text = "R0 · Wandering Dealer"
+	titleLabel.TextColor3 = Color3.fromRGB(232, 214, 186)
+	titleLabel.TextStrokeTransparency = 0.5
+	titleLabel.TextScaled = true
+	titleLabel.Parent = billboard
+end
+
+local function buildMerchant(origin: CFrame): Model
+	-- 暫時用經典 Noob。帽子和補丁會把骨架擠歪，外觀之後再換。
+	local description = Instance.new("HumanoidDescription")
+	local noobYellow = Color3.fromRGB(245, 205, 48)
+	local noobBlue = Color3.fromRGB(13, 105, 172)
+	local noobGreen = Color3.fromRGB(75, 151, 75)
+	description.HeadColor = noobYellow
+	description.TorsoColor = noobBlue
+	description.LeftArmColor = noobYellow
+	description.RightArmColor = noobYellow
+	description.LeftLegColor = noobGreen
+	description.RightLegColor = noobGreen
+	description.HeightScale = 1
+	description.WidthScale = 1
+	description.DepthScale = 1
+	description.HeadScale = 1
+	description.BodyTypeScale = 0
+	description.ProportionScale = 0
+	local npc = game:GetService("Players"):CreateHumanoidModelFromDescription(description, Enum.HumanoidRigType.R15)
+	npc.Name = "LaoPo"
+	for _, child in ipairs(npc:GetChildren()) do
+		if child:IsA("Accessory") or child.Name == "Animate" or child.Name == "Health" then
+			child:Destroy()
+		end
+	end
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	local root = npc:FindFirstChild("HumanoidRootPart")
+	local head = npc:FindFirstChild("Head")
+	if humanoid == nil or root == nil or head == nil or not root:IsA("BasePart") or not head:IsA("BasePart") then
+		error("官方角色建立失敗")
+	end
+	humanoid.DisplayName = "Rusty"
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	humanoid.AutoRotate = false
+	humanoid.BreakJointsOnDeath = false
+	for _, descendant in ipairs(npc:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.CanCollide = false
+			descendant.CanTouch = false
+		end
+	end
+	local standY = origin.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5
+	local look = origin.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.001 then
+		flatLook = Vector3.new(0, 0, 1)
+	end
+	local stand = Vector3.new(origin.Position.X, standY, origin.Position.Z)
+	root.Anchored = true
+	root.CFrame = CFrame.lookAt(stand, stand + flatLook.Unit)
+	merchantNameplate(head)
+	local marker = Instance.new("Attachment")
+	marker.Name = "PromptAnchor"
+	marker.Position = Vector3.new(0, 1.55, 0)
+	marker.Parent = head
+	marker:SetAttribute("Station", "R0Dealer")
+	local interaction = prompt(marker, "Check the stall", "Rusty")
+	interaction.MaxActivationDistance = 14
+	interaction.UIOffset = Vector2.new(0, -8)
+	return npc
 end
 
 local function buildDealer(parent: Instance)
+	-- 玩家從 +Z 走近。老破面向玩家，攤位放在他身後（-Z）。
 	local origin = CFrame.new(-28, 0.8, -18)
 	local dealer = Instance.new("Model")
 	dealer.Name = "R0Dealer"
 	dealer.Parent = parent
 
-	local wood = Color3.fromRGB(126, 84, 46)
-	local woodDark = Color3.fromRGB(84, 54, 32)
-	local coat = Color3.fromRGB(98, 62, 36)
-	local skin = Color3.fromRGB(214, 176, 138)
-	local cloth = Color3.fromRGB(72, 64, 52)
-	-- 原模型約 2.7 studs。2 倍後帽頂約 5.5，接近一般玩家身高。
-	local SCALE = 2
-	-- 鞋子底部原本離地 0.04，放大後下移，讓鞋底貼在地板。
-	local FOOT = -0.08
+	local steel = Color3.fromRGB(58, 60, 64)
+	local steelDark = Color3.fromRGB(36, 36, 38)
+	local rust = Color3.fromRGB(122, 64, 38)
+	local wood = Color3.fromRGB(112, 78, 48)
+	local woodDark = Color3.fromRGB(78, 54, 34)
+	local tarp = Color3.fromRGB(86, 90, 62)
+	local soot = Color3.fromRGB(28, 28, 30)
 
-	local function place(localCf: CFrame, scale: number, yShift: number): CFrame
-		return localCf.Rotation + (localCf.Position * scale + Vector3.new(0, yShift, 0))
-	end
-
-	local function add(model: Model, name: string, size: Vector3, localCf: CFrame, color: Color3, material: Enum.Material?, collide: boolean?, scale: number, yShift: number)
+	local function add(name: string, size: Vector3, localCf: CFrame, color: Color3, material: Enum.Material?, collide: boolean?, className: string?)
 		return part({
 			name = name,
-			size = size * scale,
-			cframe = origin * place(localCf, scale, yShift),
+			className = className,
+			size = size,
+			cframe = origin * localCf,
 			color = color,
 			material = material,
-			parent = model,
+			parent = dealer,
 			collide = collide == true,
 		})
 	end
 
-	add(dealer, "StallTop", Vector3.new(4.4, 0.22, 2.3), CFrame.new(0, 1.2, 2.5), wood, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "StallLegL", Vector3.new(0.22, 1.2, 0.22), CFrame.new(-1.9, 0.6, 1.6), woodDark, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "StallLegR", Vector3.new(0.22, 1.2, 0.22), CFrame.new(1.9, 0.6, 1.6), woodDark, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "StallLegBL", Vector3.new(0.22, 1.2, 0.22), CFrame.new(-1.9, 0.6, 3.4), woodDark, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "StallLegBR", Vector3.new(0.22, 1.2, 0.22), CFrame.new(1.9, 0.6, 3.4), woodDark, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "Canopy", Vector3.new(4.8, 0.12, 2.6), CFrame.new(0, 3.15, 2.5), Color3.fromRGB(168, 92, 48), Enum.Material.Fabric, false, SCALE, 0)
-	add(dealer, "CanopyPostL", Vector3.new(0.16, 1.9, 0.16), CFrame.new(-2.15, 2.15, 1.4), woodDark, Enum.Material.Wood, false, SCALE, 0)
-	add(dealer, "CanopyPostR", Vector3.new(0.16, 1.9, 0.16), CFrame.new(2.15, 2.15, 1.4), woodDark, Enum.Material.Wood, false, SCALE, 0)
-	add(dealer, "CrateA", Vector3.new(1.15, 0.9, 1.05), CFrame.new(-2.7, 0.45, 1.1), wood, Enum.Material.Wood, true, SCALE, 0)
-	add(dealer, "CrateB", Vector3.new(0.85, 0.7, 0.8), CFrame.new(-2.5, 1.2, 1.35) * CFrame.Angles(0, 0.4, 0), woodDark, Enum.Material.Wood, true, SCALE, 0)
-	local tire = add(dealer, "OldTire", Vector3.new(0.28, 1.15, 1.15), CFrame.new(2.7, 0.575, 1.5), Color3.fromRGB(42, 42, 46), Enum.Material.SmoothPlastic, true, SCALE, 0)
-	tire.Shape = Enum.PartType.Cylinder
-	local sign = add(dealer, "PriceSign", Vector3.new(1.5, 0.7, 0.08), CFrame.new(0, 1.7, 1.28) * CFrame.Angles(0, math.pi, 0), Color3.fromRGB(48, 36, 28), Enum.Material.Wood, false, SCALE, 0)
-	priceSign(sign, "500\n金幣一台")
-	local nameBoard = add(dealer, "NameSign", Vector3.new(1.8, 0.46, 0.08), CFrame.new(0, 2.55, 1.28) * CFrame.Angles(0, math.pi, 0), Color3.fromRGB(58, 42, 30), Enum.Material.Wood, false, SCALE, 0)
-	priceSign(nameBoard, "老破的攤")
-
-	local used = CarVisualFactory.build({
-		qualityId = "Common",
-		upgradeLevel = 0,
-		displayName = "二手玩具車",
-	})
-	used.Name = "UsedCar"
-	for _, descendant in ipairs(used:GetDescendants()) do
-		if descendant:IsA("BillboardGui") or descendant:IsA("ParticleEmitter") or descendant:IsA("PointLight") then
-			descendant:Destroy()
-		elseif descendant:IsA("BasePart") and string.sub(descendant.Name, 1, 5) ~= "Wheel" then
-			descendant.Color = descendant.Color:Lerp(Color3.fromRGB(112, 74, 40), 0.55)
-		end
+	local function wedge(name: string, size: Vector3, localCf: CFrame, color: Color3, material: Enum.Material?, collide: boolean?)
+		return add(name, size, localCf, color, material, collide, "WedgePart")
 	end
-	used.Parent = dealer
-	used:PivotTo(origin * CFrame.new(0.3, 3.16, 5.1))
 
-	local npc = Instance.new("Model")
-	npc.Name = "LaoPo"
+	local function pipe(name: string, length: number, diameter: number, localCf: CFrame, color: Color3, material: Enum.Material?, collide: boolean?)
+		local item = add(name, Vector3.new(length, diameter, diameter), localCf, color, material, collide)
+		item.Shape = Enum.PartType.Cylinder
+		return item
+	end
+
+	-- 四根方柱同時撐住桌面和棚頂，樑接在柱頂，桌板嵌在柱子中間。
+	local xL, xR = -2.5, 2.5
+	local zF, zB = -4.4, -6.9
+	local postW = 0.28
+	local postTop = 5.05
+	local postBase = 0.1
+	local postH = postTop - postBase
+	local postY = postBase + postH * 0.5
+	local beamY = postTop + 0.09
+	local spanX = (xR - xL) + postW
+	local spanZ = (zB - zF) * -1
+	local midZ = (zF + zB) * 0.5
+	local upright = CFrame.Angles(0, 0, math.rad(90))
+
+	local function post(name: string, x: number, z: number)
+		add(name .. "Foot", Vector3.new(0.72, 0.1, 0.72), CFrame.new(x, 0.05, z), steelDark, Enum.Material.DiamondPlate, true)
+		add(name, Vector3.new(postW, postH, postW), CFrame.new(x, postY, z), steel, Enum.Material.Metal, true)
+	end
+
+	post("PostFL", xL, zF)
+	post("PostFR", xR, zF)
+	post("PostBL", xL, zB)
+	post("PostBR", xR, zB)
+	add("BeamFront", Vector3.new(spanX, 0.18, 0.18), CFrame.new(0, beamY, zF), steelDark, Enum.Material.Metal, false)
+	add("BeamBack", Vector3.new(spanX, 0.18, 0.18), CFrame.new(0, beamY, zB), steelDark, Enum.Material.Metal, false)
+	add("BeamLeft", Vector3.new(0.18, 0.18, spanZ), CFrame.new(xL, beamY, midZ), steelDark, Enum.Material.Metal, false)
+	add("BeamRight", Vector3.new(0.18, 0.18, spanZ), CFrame.new(xR, beamY, midZ), steelDark, Enum.Material.Metal, false)
+	add("Canopy", Vector3.new(spanX + 0.35, 0.08, spanZ + 0.28), CFrame.new(0, beamY + 0.13, midZ), tarp, Enum.Material.Fabric, false)
+	add("CanopyHem", Vector3.new(spanX + 0.2, 0.16, 0.1), CFrame.new(0, beamY - 0.02, zF + 0.12), Color3.fromRGB(62, 64, 46), Enum.Material.Fabric, false)
+	add("CanopyStitch", Vector3.new(spanX - 0.4, 0.02, 0.06), CFrame.new(0, beamY + 0.18, midZ), Color3.fromRGB(48, 46, 40), Enum.Material.Fabric, false)
+
+	local topY = 2.58
+	local plankT = 0.16
+	local plankY = topY - plankT * 0.5
+	add("StallTop", Vector3.new(4.55, plankT, 0.72), CFrame.new(0, plankY, midZ), wood, Enum.Material.Wood, true)
+	add("PlankFront", Vector3.new(4.55, plankT, 0.7), CFrame.new(0, plankY, midZ + 0.74), woodDark, Enum.Material.Wood, true)
+	add("PlankBack", Vector3.new(4.55, plankT, 0.7), CFrame.new(0, plankY, midZ - 0.74), Color3.fromRGB(96, 66, 40), Enum.Material.Wood, true)
+	add("ApronFront", Vector3.new(4.55, 0.18, 0.12), CFrame.new(0, topY - 0.24, zF - 0.18), steel, Enum.Material.DiamondPlate, false)
+	add("ApronBack", Vector3.new(4.55, 0.18, 0.12), CFrame.new(0, topY - 0.24, zB + 0.18), steel, Enum.Material.Metal, false)
+	add("ApronLeft", Vector3.new(0.12, 0.18, spanZ - 0.5), CFrame.new(xL + 0.22, topY - 0.24, midZ), steel, Enum.Material.Metal, false)
+	add("ApronRight", Vector3.new(0.12, 0.18, spanZ - 0.5), CFrame.new(xR - 0.22, topY - 0.24, midZ), steel, Enum.Material.Metal, false)
+	add("Stretcher", Vector3.new(spanX - 0.2, 0.14, 0.14), CFrame.new(0, 1.15, midZ), steelDark, Enum.Material.Metal, false)
+	add("StretcherZ", Vector3.new(0.14, 0.14, spanZ - 0.4), CFrame.new(0, 1.15, midZ), steelDark, Enum.Material.Metal, false)
+	add("BackBrace", Vector3.new(6.45, 0.1, 0.1), CFrame.new(0, 2.45, zB) * CFrame.Angles(0, 0, math.rad(39)), rust, Enum.Material.CorrodedMetal, false)
+
+	local function bolt(name: string, x: number, y: number, z: number)
+		pipe(name, 0.06, 0.14, CFrame.new(x, y, z) * CFrame.Angles(0, math.rad(90), 0), Color3.fromRGB(168, 146, 92), Enum.Material.Metal, false)
+	end
+
+	bolt("BoltFL", xL, topY - 0.24, zF + 0.18)
+	bolt("BoltFR", xR, topY - 0.24, zF + 0.18)
+	bolt("BoltBL", xL, topY - 0.24, zB - 0.18)
+	bolt("BoltBR", xR, topY - 0.24, zB - 0.18)
+
+	-- 桌上只放小零件，不放車。高度都從桌面往上算。
+	add("Toolbox", Vector3.new(1.15, 0.4, 0.58), CFrame.new(-1.25, topY + 0.2, midZ - 0.45), soot, Enum.Material.DiamondPlate, false)
+	add("ToolboxLid", Vector3.new(1.15, 0.06, 0.58), CFrame.new(-1.25, topY + 0.43, midZ - 0.45), steel, Enum.Material.Metal, false)
+	add("ToolboxHandle", Vector3.new(0.42, 0.08, 0.08), CFrame.new(-1.25, topY + 0.52, midZ - 0.45), steelDark, Enum.Material.Metal, false)
+	add("Tray", Vector3.new(1.35, 0.06, 0.8), CFrame.new(1.15, topY + 0.03, midZ + 0.15), steelDark, Enum.Material.DiamondPlate, false)
+	pipe("Coil", 0.16, 0.5, CFrame.new(1.35, topY + 0.14, midZ - 0.55) * upright, rust, Enum.Material.CorrodedMetal, false)
+	add("Wrench", Vector3.new(0.85, 0.05, 0.14), CFrame.new(0.15, topY + 0.025, midZ + 0.35) * CFrame.Angles(0, 0.4, 0), Color3.fromRGB(150, 150, 148), Enum.Material.Metal, false)
+	add("WrenchHead", Vector3.new(0.22, 0.06, 0.22), CFrame.new(-0.22, topY + 0.03, midZ + 0.5), Color3.fromRGB(150, 150, 148), Enum.Material.Metal, false)
+	pipe("OilCan", 0.48, 0.32, CFrame.new(-1.45, topY + 0.24, midZ + 0.45) * upright, Color3.fromRGB(92, 48, 28), Enum.Material.SmoothPlastic, false)
+	add("CanSpout", Vector3.new(0.1, 0.1, 0.22), CFrame.new(-1.45, topY + 0.5, midZ + 0.62), steel, Enum.Material.Metal, false)
+
+	-- 柱子外側的地面雜物，不壓到桌面。
+	pipe("OilDrum", 1.55, 1.2, CFrame.new(3.55, 0.78, midZ) * upright, rust, Enum.Material.CorrodedMetal, true)
+	pipe("DrumRim", 0.08, 1.28, CFrame.new(3.55, 1.5, midZ) * upright, steelDark, Enum.Material.Metal, false)
+	add("CrateA", Vector3.new(1.15, 0.85, 1.0), CFrame.new(-3.55, 0.48, midZ - 0.2), wood, Enum.Material.Wood, true)
+	add("CrateLid", Vector3.new(1.2, 0.08, 1.05), CFrame.new(-3.55, 0.94, midZ - 0.2), woodDark, Enum.Material.Wood, false)
+	pipe("OldTire", 0.36, 1.55, CFrame.new(3.15, 0.8, zB + 0.15) * CFrame.Angles(0, math.rad(90), 0), soot, Enum.Material.SmoothPlastic, true)
+
+	-- 泥地範圍不變。重疊的面分開高度，避免兩塊地面貼在同一個平面上閃爍。
+	local soil = Color3.fromRGB(96, 70, 44)
+	local soilDark = Color3.fromRGB(68, 48, 32)
+	local dust = Color3.fromRGB(142, 118, 78)
+	local deadGrass = Color3.fromRGB(92, 96, 52)
+	add("SoilBed", Vector3.new(16, 0.12, 14), CFrame.new(0.2, 0.08, -5.2) * CFrame.Angles(0, 0.08, 0), soil, Enum.Material.Ground, false)
+	add("SoilFront", Vector3.new(9, 0.1, 7), CFrame.new(-0.6, 0.26, -0.4) * CFrame.Angles(0, -0.12, 0), Color3.fromRGB(112, 82, 50), Enum.Material.Ground, false)
+	add("SoilBack", Vector3.new(12, 0.1, 8), CFrame.new(0.8, 0.4, -12.2), soilDark, Enum.Material.Mud, false)
+	add("SoilSideL", Vector3.new(6, 0.1, 8), CFrame.new(-6.2, 0.52, -6.4) * CFrame.Angles(0, 0.2, 0), Color3.fromRGB(84, 60, 38), Enum.Material.Ground, false)
+	add("SoilSideR", Vector3.new(5.5, 0.1, 7), CFrame.new(6.4, 0.64, -7.2) * CFrame.Angles(0, -0.18, 0), Color3.fromRGB(88, 64, 40), Enum.Material.Mud, false)
+	add("DustPath", Vector3.new(3.4, 0.08, 8.5), CFrame.new(0.3, 0.48, -0.6), dust, Enum.Material.Sand, false)
+	wedge("SoilLipF", Vector3.new(8, 0.16, 1.6), CFrame.new(0.4, 0.08, 2.6) * CFrame.Angles(0, math.pi, 0), soil, Enum.Material.Ground, false)
+	wedge("SoilLipB", Vector3.new(10, 0.2, 1.8), CFrame.new(0.6, 0.12, -16.2), soilDark, Enum.Material.Ground, false)
+	wedge("SoilLipL", Vector3.new(1.4, 0.16, 7), CFrame.new(-8.4, 0.1, -6) * CFrame.Angles(0, math.rad(90), 0), soil, Enum.Material.Ground, false)
+	wedge("SoilLipR", Vector3.new(1.4, 0.16, 6), CFrame.new(8.2, 0.1, -7.4) * CFrame.Angles(0, math.rad(-90), 0), soilDark, Enum.Material.Ground, false)
+	add("OilStain", Vector3.new(2.2, 0.04, 1.5), CFrame.new(2.4, 0.36, -4.6) * CFrame.Angles(0, 0.4, 0), Color3.fromRGB(36, 32, 28), Enum.Material.Slate, false)
+	add("PebbleA", Vector3.new(0.35, 0.18, 0.28), CFrame.new(-2.2, 0.4, 0.8), Color3.fromRGB(92, 90, 86), Enum.Material.Rock, false)
+	add("PebbleB", Vector3.new(0.22, 0.14, 0.2), CFrame.new(1.8, 0.59, 1.4) * CFrame.Angles(0, 0.6, 0), Color3.fromRGB(110, 104, 96), Enum.Material.Rock, false)
+	add("PebbleC", Vector3.new(0.45, 0.22, 0.32), CFrame.new(4.6, 0.25, -3.2), Color3.fromRGB(74, 70, 64), Enum.Material.Slate, false)
+	add("TuftA", Vector3.new(0.35, 0.55, 0.12), CFrame.new(-4.2, 0.59, -1.2) * CFrame.Angles(0, 0.4, 0.08), deadGrass, Enum.Material.Grass, false)
+	add("TuftB", Vector3.new(0.28, 0.42, 0.1), CFrame.new(3.2, 0.52, 0.6) * CFrame.Angles(0, -0.5, -0.1), deadGrass, Enum.Material.Grass, false)
+	add("TuftC", Vector3.new(0.4, 0.62, 0.12), CFrame.new(-5.4, 0.88, -9.2) * CFrame.Angles(0, 0.8, 0.12), Color3.fromRGB(78, 82, 44), Enum.Material.Grass, false)
+	add("TuftD", Vector3.new(0.22, 0.36, 0.1), CFrame.new(5.8, 0.87, -10.4), deadGrass, Enum.Material.Grass, false)
+
+	-- 路牌立在泥路近端右側，正面朝走近的人。
+	local signFace = CFrame.Angles(0, math.pi, 0)
+	add("PoolPost", Vector3.new(0.22, 2.35, 0.22), CFrame.new(1.55, 1.2, 2.35), woodDark, Enum.Material.Wood, true)
+	local poolSign = add("PoolSign", Vector3.new(2.4, 1.2, 0.12), CFrame.new(1.55, 2.15, 2.35) * signFace, Color3.fromRGB(214, 186, 132), Enum.Material.Wood, false)
+	local signGui = Instance.new("SurfaceGui")
+	signGui.Name = "PoolLabel"
+	signGui.Face = Enum.NormalId.Front
+	signGui.LightInfluence = 0
+	signGui.Parent = poolSign
+	local signText = Instance.new("TextLabel")
+	signText.BackgroundTransparency = 1
+	signText.Size = UDim2.fromScale(1, 1)
+	signText.Font = Enum.Font.GothamBold
+	signText.Text = "NO LICENSE\nPRIZE POOL"
+	signText.TextColor3 = Color3.fromRGB(42, 28, 18)
+	signText.TextScaled = true
+	signText.TextWrapped = true
+	signText.Parent = signGui
+
+	-- 攤位正後方的回收山。範圍仍在泥地裡，只加高加厚，前緣不壓到棚子。
+	local heapZ = -11.4
+	add("HeapCore", Vector3.new(8.8, 2.8, 6.2), CFrame.new(0.4, 1.45, heapZ), soilDark, Enum.Material.Ground, true)
+	add("HeapMid", Vector3.new(6.4, 2.6, 4.4), CFrame.new(0.1, 3.85, heapZ - 0.25), rust, Enum.Material.CorrodedMetal, true)
+	add("HeapTop", Vector3.new(4.2, 2.2, 3.0), CFrame.new(0.45, 5.85, heapZ - 0.35), Color3.fromRGB(92, 50, 32), Enum.Material.CorrodedMetal, true)
+	add("HeapCap", Vector3.new(2.2, 1.6, 1.7), CFrame.new(0.05, 7.55, heapZ - 0.15), steelDark, Enum.Material.Metal, false)
+	wedge("HeapSlopeF", Vector3.new(7.4, 2.6, 2.4), CFrame.new(0.3, 1.35, heapZ + 2.5) * CFrame.Angles(0, math.pi, 0), Color3.fromRGB(78, 56, 36), Enum.Material.Ground, true)
+	wedge("HeapSlopeB", Vector3.new(7.6, 3.0, 2.4), CFrame.new(0.5, 1.55, heapZ - 3.4), soil, Enum.Material.Ground, true)
+	wedge("HeapSlopeL", Vector3.new(5.2, 2.4, 2.4), CFrame.new(-5.0, 1.25, heapZ) * CFrame.Angles(0, math.rad(90), 0), rust, Enum.Material.CorrodedMetal, false)
+	wedge("HeapSlopeR", Vector3.new(5.4, 2.6, 2.5), CFrame.new(5.2, 1.35, heapZ - 0.2) * CFrame.Angles(0, math.rad(-90), 0), Color3.fromRGB(70, 48, 34), Enum.Material.Ground, false)
+	pipe("HeapTireL", 0.55, 2.05, CFrame.new(-2.8, 2.45, heapZ + 0.9) * CFrame.Angles(0.4, 0.2, math.rad(70)), soot, Enum.Material.SmoothPlastic, false)
+	pipe("HeapTireR", 0.5, 1.8, CFrame.new(3.0, 3.45, heapZ - 0.5) * CFrame.Angles(0.2, -0.5, math.rad(100)), Color3.fromRGB(24, 24, 26), Enum.Material.SmoothPlastic, false)
+	pipe("HeapDrum", 2.1, 1.25, CFrame.new(-1.7, 4.15, heapZ - 0.55) * CFrame.Angles(0, 0.3, math.rad(78)), rust, Enum.Material.CorrodedMetal, false)
+	add("HeapHood", Vector3.new(2.6, 0.18, 1.4), CFrame.new(1.5, 5.15, heapZ + 0.45) * CFrame.Angles(0.35, -0.6, 0.2), Color3.fromRGB(132, 122, 108), Enum.Material.Metal, false)
+	add("HeapPanel", Vector3.new(2.0, 1.15, 0.12), CFrame.new(2.4, 3.85, heapZ + 1.15) * CFrame.Angles(0.15, 0.8, 0.4), steel, Enum.Material.DiamondPlate, false)
+	pipe("HeapPipe", 3.1, 0.28, CFrame.new(-0.35, 6.65, heapZ + 0.15) * CFrame.Angles(0.5, 0.8, math.rad(40)), steelDark, Enum.Material.Metal, false)
+	add("HeapCloth", Vector3.new(2.8, 0.06, 1.8), CFrame.new(-0.7, 7.05, heapZ - 0.45) * CFrame.Angles(0.4, 0.3, -0.2), Color3.fromRGB(62, 58, 48), Enum.Material.Fabric, false)
+	add("HeapCrate", Vector3.new(1.25, 0.9, 1.05), CFrame.new(2.0, 2.15, heapZ + 1.55) * CFrame.Angles(0.1, 0.5, 0.15), woodDark, Enum.Material.Wood, false)
+	add("HeapPlank", Vector3.new(2.2, 0.12, 0.32), CFrame.new(-3.1, 1.15, heapZ + 1.5) * CFrame.Angles(0.2, 0.7, 0.8), wood, Enum.Material.Wood, false)
+
+	-- 站在攤位左前側，面朝外，再往攤位斜一點。腳底仍用 origin 的地面高度。
+	local npc = buildMerchant(origin * CFrame.new(-3.35, 0, -2.2) * CFrame.Angles(0, math.pi + math.rad(24), 0))
 	npc.Parent = dealer
-	local torso = add(npc, "Torso", Vector3.new(0.95, 1.05, 0.42), CFrame.new(0, 1.48, 0), coat, Enum.Material.SmoothPlastic, false, SCALE, FOOT)
-	npc.PrimaryPart = torso
-	add(npc, "PatchGreen", Vector3.new(0.22, 0.18, 0.06), CFrame.new(-0.22, 1.62, 0.22), Color3.fromRGB(58, 122, 74), nil, false, SCALE, FOOT)
-	add(npc, "PatchBlue", Vector3.new(0.16, 0.2, 0.06), CFrame.new(0.24, 1.28, 0.22), Color3.fromRGB(52, 86, 150), nil, false, SCALE, FOOT)
-	add(npc, "PatchOrange", Vector3.new(0.18, 0.14, 0.06), CFrame.new(0.08, 1.72, 0.22), Color3.fromRGB(186, 102, 42), nil, false, SCALE, FOOT)
-	add(npc, "ArmL", Vector3.new(0.22, 0.82, 0.22), CFrame.new(-0.62, 1.38, 0), cloth, nil, false, SCALE, FOOT)
-	add(npc, "ArmR", Vector3.new(0.22, 0.82, 0.22), CFrame.new(0.62, 1.38, 0), cloth, nil, false, SCALE, FOOT)
-	add(npc, "HandL", Vector3.new(0.2, 0.2, 0.2), CFrame.new(-0.62, 0.9, 0), skin, nil, false, SCALE, FOOT)
-	add(npc, "HandR", Vector3.new(0.2, 0.2, 0.2), CFrame.new(0.62, 0.9, 0), skin, nil, false, SCALE, FOOT)
-	add(npc, "LegL", Vector3.new(0.24, 0.78, 0.24), CFrame.new(-0.2, 0.58, 0), cloth, nil, false, SCALE, FOOT)
-	add(npc, "LegR", Vector3.new(0.24, 0.78, 0.24), CFrame.new(0.2, 0.58, 0), Color3.fromRGB(64, 56, 46), nil, false, SCALE, FOOT)
-	add(npc, "ShoeL", Vector3.new(0.26, 0.16, 0.38), CFrame.new(-0.2, 0.12, -0.04), Color3.fromRGB(48, 36, 28), nil, false, SCALE, FOOT)
-	add(npc, "ShoeR", Vector3.new(0.26, 0.16, 0.38), CFrame.new(0.2, 0.12, -0.04), Color3.fromRGB(36, 32, 28), nil, false, SCALE, FOOT)
-	local head = add(npc, "Head", Vector3.new(0.62, 0.62, 0.62), CFrame.new(0, 2.28, 0), skin, nil, false, SCALE, FOOT)
-	add(npc, "EyeL", Vector3.new(0.08, 0.08, 0.04), CFrame.new(-0.14, 2.32, 0.32), Color3.fromRGB(36, 32, 30), nil, false, SCALE, FOOT)
-	add(npc, "EyeR", Vector3.new(0.08, 0.08, 0.04), CFrame.new(0.14, 2.32, 0.32), Color3.fromRGB(36, 32, 30), nil, false, SCALE, FOOT)
-	add(npc, "Mouth", Vector3.new(0.16, 0.04, 0.04), CFrame.new(0, 2.12, 0.32), Color3.fromRGB(120, 72, 64), nil, false, SCALE, FOOT)
-	add(npc, "Beard", Vector3.new(0.28, 0.16, 0.08), CFrame.new(0, 2.02, 0.3), Color3.fromRGB(72, 56, 40), nil, false, SCALE, FOOT)
-	add(npc, "Hat", Vector3.new(0.68, 0.22, 0.68), CFrame.new(0, 2.66, 0), Color3.fromRGB(58, 44, 32), nil, false, SCALE, FOOT)
-	add(npc, "HatBrim", Vector3.new(0.92, 0.08, 0.92), CFrame.new(0, 2.54, -0.04), Color3.fromRGB(48, 36, 28), nil, false, SCALE, FOOT)
-	add(npc, "ToolBag", Vector3.new(0.36, 0.32, 0.18), CFrame.new(0.58, 1.12, 0.02), Color3.fromRGB(86, 58, 34), Enum.Material.Fabric, false, SCALE, FOOT)
-	head:SetAttribute("Station", "R0Dealer")
-	local interaction = prompt(head, "看看攤位", "老破")
-	interaction.MaxActivationDistance = 14
-	interaction.UIOffset = Vector2.new(0, -20)
-	local pivot = npc:GetPivot()
-	local _, yaw = pivot:ToOrientation()
-	npc:SetAttribute("RestX", pivot.Position.X)
-	npc:SetAttribute("RestY", pivot.Position.Y)
-	npc:SetAttribute("RestZ", pivot.Position.Z)
-	npc:SetAttribute("RestYaw", yaw)
 	return dealer
 end
 
-function PlaygroundBuilder.stepDealer(folder: Instance?, time: number)
-	if typeof(folder) ~= "Instance" or type(time) ~= "number" then
+function PlaygroundBuilder.stepDealer(folder: Instance?, _time: number)
+	-- 老破改由官方 Humanoid 待機動畫負責，不再用位移左右搖。
+	if typeof(folder) ~= "Instance" then
 		return
 	end
-	local npc = folder:FindFirstChild("LaoPo", true)
-	if npc == nil or not npc:IsA("Model") then
-		return
-	end
-	local x = npc:GetAttribute("RestX")
-	local y = npc:GetAttribute("RestY")
-	local z = npc:GetAttribute("RestZ")
-	local yaw = npc:GetAttribute("RestYaw")
-	if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" or type(yaw) ~= "number" then
-		return
-	end
-	local sway = math.sin(time * 1.15) * 0.07
-	local bob = math.abs(math.sin(time * 1.15)) * 0.035
-	npc:PivotTo(CFrame.new(x, y + bob, z) * CFrame.Angles(0, yaw + sway, 0))
 end
 
 local function buildShowroom(parent: Instance)
@@ -386,7 +557,7 @@ local function buildShowroom(parent: Instance)
 		color = CREAM,
 		parent = parent,
 	})
-	caption(podium, "玩具車展示台", 5)
+	caption(podium, "Toy Car Display", 5)
 	local index = 0
 	for _, car in ipairs(CarCatalog.getAll()) do
 		if car.UnlockRebirth == 0 then
@@ -403,7 +574,7 @@ local function buildShowroom(parent: Instance)
 				modelId = car.ModelId,
 				qualityId = car.Quality,
 				upgradeLevel = 0,
-				displayName = car.DisplayName .. "（展示）",
+				displayName = car.DisplayName .. " (Display)",
 			})
 			model.Name = "DisplayCar"
 			model:SetAttribute("DisplayOnly", true)
@@ -414,12 +585,21 @@ local function buildShowroom(parent: Instance)
 end
 
 function PlaygroundBuilder.build(parent: Instance)
+	-- 建立官方角色會讓出執行權。鎖住避免測試與開局同時各做一份場景。
+	while PlaygroundBuilder._building == true do
+		task.wait()
+	end
 	local existing = parent:FindFirstChild(PlaygroundBuilder.FolderName)
 	if existing ~= nil
 		and existing:GetAttribute("Complete") == true
 		and existing:GetAttribute("BuildVersion") == PlaygroundBuilder.Version
 	then
 		return existing, false
+	end
+	PlaygroundBuilder._building = true
+	local function finish(folder: Instance, created: boolean)
+		PlaygroundBuilder._building = false
+		return folder, created
 	end
 	if existing ~= nil then
 		existing:Destroy()
@@ -449,7 +629,7 @@ function PlaygroundBuilder.build(parent: Instance)
 	spawn.CFrame = CFrame.new(-78, 1.3, 8)
 	spawn.TopSurface = Enum.SurfaceType.Smooth
 	spawn.Parent = folder
-	caption(spawn, "出生區\n關服後測試資料會消失", 4)
+	caption(spawn, "Spawn\nTest data vanishes when the server closes", 4)
 
 	buildShowroom(folder)
 
@@ -471,12 +651,16 @@ function PlaygroundBuilder.build(parent: Instance)
 		parent = folder,
 		collide = false,
 	})
-	caption(garageSign, "車庫展示", 2.2)
+	caption(garageSign, "Garage Display", 2.2)
 	garageSign:SetAttribute("Station", "GarageDisplay")
 
-	buildDealer(folder)
-	kiosk(folder, "UpgradeBench", Vector3.new(-28, 3.3, 16), Color3.fromRGB(255, 186, 64), "強化工作台", "強化")
-	kiosk(folder, "RaceKiosk", Vector3.new(12, 3.3, 16), Color3.fromRGB(255, 132, 48), "競速", "開啟競速")
+	local builtOk, builtErr = pcall(buildDealer, folder)
+	if not builtOk then
+		PlaygroundBuilder._building = false
+		error(builtErr)
+	end
+	kiosk(folder, "UpgradeBench", Vector3.new(-28, 3.3, 16), Color3.fromRGB(255, 186, 64), "Upgrade Bench", "Upgrade")
+	kiosk(folder, "RaceKiosk", Vector3.new(12, 3.3, 16), Color3.fromRGB(255, 132, 48), "Race", "Open Race")
 	-- 模型留著，方便以後加回提示。現在沒有 ProximityPrompt，玩家看不到也按不到。
 	local bossGate = part({
 		name = "BossGate",
@@ -502,7 +686,11 @@ function PlaygroundBuilder.build(parent: Instance)
 	folder:SetAttribute("BuildVersion", PlaygroundBuilder.Version)
 	folder:SetAttribute("Complete", true)
 	folder.Parent = parent
-	return folder, true
+	local merchant = folder:FindFirstChild("LaoPo", true)
+	if merchant ~= nil and merchant:IsA("Model") then
+		playMerchantIdle(merchant)
+	end
+	return finish(folder, true)
 end
 
 return PlaygroundBuilder

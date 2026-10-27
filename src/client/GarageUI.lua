@@ -70,12 +70,12 @@ end
 
 local function oddsText(upgradeLevel: number): string
 	if upgradeLevel >= CarConfig.MaxUpgradeLevel then
-		return "已達 +10，不能再強化。"
+		return "Already +10. It cannot be upgraded again."
 	end
 	local weights, reason = UpgradeConfig.getWeights(upgradeLevel)
 	local total = UpgradeConfig.sumWeights(upgradeLevel)
 	if weights == nil or total == nil or total <= 0 then
-		return "無法讀取機率：" .. tostring(reason)
+		return "Could not read the odds: " .. tostring(reason)
 	end
 	local lines = {}
 	for _, outcome in ipairs(UpgradeConfig.getOutcomes()) do
@@ -88,7 +88,7 @@ end
 
 local function carLine(entry): string
 	return string.format(
-		"%s　%s　+%d　性能 %s",
+		"%s  %s  +%d  Power %s",
 		entry.displayName,
 		entry.qualityName,
 		entry.upgradeLevel,
@@ -124,6 +124,86 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	gui.Enabled = true
 	gui.Parent = playerGui
 
+	local INTRO_LINES = {
+		"New around here? Quit staring. I used to run these tracks too.",
+		"You're still R0. That means you haven't been reborn. Every driver starts here.",
+		"Push past your limit, and you can attempt a rebirth into a higher rank.",
+		"Higher ranks get you better dealers and better cars. That's not your problem yet.",
+		"All I've got is scrap, and a few toy cars that might not even run.",
+		"500 gold a pull. Get lucky, and you might dig a treasure out of this junk.",
+		"Alright. Come try your luck.",
+	}
+	local introIndex = 1
+	local introDone = nil
+	local intro = Instance.new("Frame")
+	intro.Name = "DealerIntro"
+	intro.AnchorPoint = Vector2.new(0.5, 1)
+	intro.Position = UDim2.new(0.5, 0, 1, -28)
+	intro.Size = UDim2.fromOffset(640, 168)
+	intro.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+	intro.BackgroundTransparency = 0.06
+	intro.BorderSizePixel = 0
+	intro.Visible = false
+	intro.ZIndex = 20
+	intro.Parent = gui
+	corner(intro, 12)
+	local introName = label(intro, 20)
+	introName.Name = "Speaker"
+	introName.Font = Enum.Font.GothamBold
+	introName.Position = UDim2.fromOffset(18, 12)
+	introName.Size = UDim2.new(1, -150, 0, 26)
+	introName.Text = "Rusty"
+	introName.ZIndex = 21
+	local introTitle = label(intro, 14)
+	introTitle.Name = "SpeakerTitle"
+	introTitle.Position = UDim2.fromOffset(18, 38)
+	introTitle.Size = UDim2.new(1, -150, 0, 18)
+	introTitle.Text = "R0 · Wandering Dealer"
+	introTitle.TextColor3 = Color3.fromRGB(232, 214, 186)
+	introTitle.ZIndex = 21
+	local introBody = label(intro, 18)
+	introBody.Name = "Line"
+	introBody.Position = UDim2.fromOffset(18, 62)
+	introBody.Size = UDim2.new(1, -36, 0, 52)
+	introBody.TextYAlignment = Enum.TextYAlignment.Top
+	introBody.ZIndex = 21
+	local introNext = button(intro, "Continue", Color3.fromRGB(255, 148, 48), UDim2.fromOffset(148, 34))
+	introNext.Name = "ContinueIntro"
+	introNext.AnchorPoint = Vector2.new(1, 1)
+	introNext.Position = UDim2.new(1, -16, 1, -12)
+	introNext.ZIndex = 21
+	local introLeave = button(intro, "Leave", Color3.fromRGB(210, 214, 220), UDim2.fromOffset(96, 34))
+	introLeave.Name = "LeaveIntro"
+	introLeave.AnchorPoint = Vector2.new(1, 1)
+	introLeave.Position = UDim2.new(1, -176, 1, -12)
+	introLeave.ZIndex = 21
+
+	local function showIntroLine()
+		introBody.Text = INTRO_LINES[introIndex]
+		introNext.Text = if introIndex == #INTRO_LINES then "See the stall" else "Continue"
+	end
+
+	introNext.MouseButton1Click:Connect(function()
+		if intro.Visible ~= true then
+			return
+		end
+		if introIndex < #INTRO_LINES then
+			introIndex += 1
+			showIntroLine()
+			return
+		end
+		intro.Visible = false
+		local callback = introDone
+		introDone = nil
+		if callback ~= nil then
+			callback()
+		end
+	end)
+	introLeave.MouseButton1Click:Connect(function()
+		intro.Visible = false
+		introDone = nil
+	end)
+
 	local hud = label(gui, 15)
 	hud.Name = "Hud"
 	hud.Font = Enum.Font.GothamMedium
@@ -131,7 +211,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	hud.BackgroundTransparency = 0.15
 	hud.TextXAlignment = Enum.TextXAlignment.Center
 	hud.TextYAlignment = Enum.TextYAlignment.Center
-	hud.Text = "讀取車庫中…"
+	hud.Text = "Loading garage…"
 	corner(hud, 8)
 
 	local raceStatusOpen = false
@@ -146,7 +226,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	raceStatus.ZIndex = 5
 	raceStatus.Parent = gui
 	corner(raceStatus, 8)
-	local raceStatusToggle = button(raceStatus, "展開", GOLD, UDim2.fromOffset(52, 24))
+	local raceStatusToggle = button(raceStatus, "Open", GOLD, UDim2.fromOffset(64, 24))
 	raceStatusToggle.Name = "Toggle"
 	raceStatusToggle.AnchorPoint = Vector2.new(1, 0)
 	raceStatusToggle.Position = UDim2.new(1, -6, 0, 4)
@@ -208,7 +288,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	garageCaption.Font = Enum.Font.GothamBold
 	garageCaption.Position = UDim2.new(0, 0, 1, -22)
 	garageCaption.Size = UDim2.new(1, 0, 0, 20)
-	garageCaption.Text = "車庫"
+	garageCaption.Text = "Garage"
 	garageCaption.TextXAlignment = Enum.TextXAlignment.Center
 	garageCaption.TextColor3 = Color3.fromRGB(24, 26, 32)
 	garageCaption.ZIndex = 8
@@ -233,7 +313,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		title.TextXAlignment = Enum.TextXAlignment.Left
 		title.TextYAlignment = Enum.TextYAlignment.Center
 		title.ZIndex = 4
-		local closeButton = button(panel, "關閉", CLOUD, UDim2.fromOffset(72, 32))
+		local closeButton = button(panel, "Close", CLOUD, UDim2.fromOffset(72, 32))
 		closeButton.Name = "Close"
 		closeButton.AnchorPoint = Vector2.new(1, 0)
 		closeButton.Position = UDim2.new(1, -12, 0, 12)
@@ -265,7 +345,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		return list
 	end
 
-	local garagePanel, garageClose = shell("GaragePanel", "車庫")
+	local garagePanel, garageClose = shell("GaragePanel", "Garage")
 	local garageList = makeList(garagePanel, "CarList")
 	local preview = Instance.new("ViewportFrame")
 	preview.Name = "Preview"
@@ -287,27 +367,38 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	garageDetail.Name = "Detail"
 	garageDetail.ZIndex = 4
 
-	local gachaPanel, gachaClose = shell("GachaPanel", "老破的二手車攤")
+	local gachaPanel, gachaClose = shell("GachaPanel", "RUSTY'S SCRAP LOTTERY")
+	gachaClose.Text = "X"
+	gachaClose.Size = UDim2.fromOffset(36, 32)
+	gachaClose.TextSize = 18
+	local gachaTitle = gachaPanel:FindFirstChild("Title")
+	if gachaTitle ~= nil and gachaTitle:IsA("TextLabel") then
+		gachaTitle.TextSize = 18
+		gachaTitle.Size = UDim2.new(1, -210, 0, 32)
+	end
+	local gachaScale = Instance.new("UIScale")
+	gachaScale.Name = "FitScale"
+	gachaScale.Parent = gachaPanel
 	local gachaBoard = GachaBoard.mount(gachaPanel)
 
-	local upgradePanel, upgradeClose = shell("UpgradePanel", "強化")
+	local upgradePanel, upgradeClose = shell("UpgradePanel", "Upgrade")
 	local upgradeList = makeList(upgradePanel, "CarList")
 	local upgradeDetail = label(upgradePanel, 16)
 	upgradeDetail.Name = "Detail"
 	upgradeDetail.ZIndex = 4
-	local upgradeButton = button(upgradePanel, "強化", GOLD, UDim2.fromOffset(180, 44))
+	local upgradeButton = button(upgradePanel, "Upgrade", GOLD, UDim2.fromOffset(180, 44))
 	upgradeButton.Name = "UpgradeButton"
 	upgradeButton.ZIndex = 5
 
-	local racePanel, raceClose = shell("RacePanel", "競速")
+	local racePanel, raceClose = shell("RacePanel", "Race")
 	local raceList = makeList(racePanel, "CarList")
 	local raceDetail = label(racePanel, 16)
 	raceDetail.Name = "Detail"
 	raceDetail.ZIndex = 4
-	local raceButton = button(racePanel, "開始自動競速", MINT, UDim2.fromOffset(180, 44))
+	local raceButton = button(racePanel, "Start Auto Race", MINT, UDim2.fromOffset(180, 44))
 	raceButton.Name = "StartAutoButton"
 	raceButton.ZIndex = 5
-	local stopButton = button(racePanel, "停止自動競速", Color3.fromRGB(255, 122, 96), UDim2.fromOffset(180, 40))
+	local stopButton = button(racePanel, "Stop Auto Race", Color3.fromRGB(255, 122, 96), UDim2.fromOffset(180, 40))
 	stopButton.Name = "StopAutoButton"
 	stopButton.ZIndex = 5
 
@@ -391,7 +482,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			row.TextWrapped = true
 			row.TextXAlignment = Enum.TextXAlignment.Left
 			row.TextColor3 = if selected then Color3.fromRGB(24, 26, 32) else Color3.new(1, 1, 1)
-			row.Text = "    " .. carLine(entry) .. (if entry.racing == true then "　參賽中" else "")
+			row.Text = "    " .. carLine(entry) .. (if entry.racing == true then "  Racing" else "")
 			row.AutoButtonColor = true
 			row.Modal = false
 			row.Active = true
@@ -523,11 +614,12 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end
 		for _, panel in pairs(panels) do
 			if panel == gachaPanel then
-				local gachaWidth = math.clamp(width - 48, 560, 820)
-				local gachaHeight = math.clamp(height - 72, 560, 700)
+				local designW, designH = 1000, 620
+				local fit = math.min(1, (width - 16) / designW, (height - 16) / designH)
+				gachaScale.Scale = math.clamp(fit, 0.01, 1)
 				panel.AnchorPoint = Vector2.new(0.5, 0.5)
-				panel.Position = UDim2.new(0.5, 0, 0.5, 8)
-				panel.Size = UDim2.fromOffset(gachaWidth, gachaHeight)
+				panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+				panel.Size = UDim2.fromOffset(designW, designH)
 			else
 				panel.AnchorPoint = Vector2.new(0, 0)
 				panel.Position = panelPosition
@@ -567,8 +659,8 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 
 	local function render()
 		local balance = if state ~= nil then state.balance else "—"
-		local notice = if state ~= nil and state.memoryNotice ~= nil then state.memoryNotice else "關服後資料會消失"
-		hud.Text = string.format("測試金幣 %s    %s", tostring(balance), notice)
+		local notice = if state ~= nil and state.memoryNotice ~= nil then state.memoryNotice else "Data vanishes when the server closes"
+		hud.Text = string.format("Test gold %s    %s", tostring(balance), notice)
 		garageButton.BackgroundColor3 = if currentPage == "garage" then GOLD else ORANGE
 
 		local selected = findCar(selectedId)
@@ -585,10 +677,10 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		local singleRace = state ~= nil and state.raceActive == true and not autoBusy
 
 		if selected == nil then
-			garageDetail.Text = "還沒有車輛。到老破的二手車攤花費測試金幣取得第一台車。"
+			garageDetail.Text = "No cars yet. Spend test gold at Rusty's scrap stall for your first one."
 		else
 			garageDetail.Text = string.format(
-				"%s\n%s　%s　強化 +%d　性能 %s\n點選列表會把這台車設為競速用車。",
+				"%s\n%s  %s  Upgrade +%d  Power %s\nPick a row to set this car for racing.",
 				selected.displayName,
 				selected.qualityName,
 				selected.colorName,
@@ -600,17 +692,17 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			if handlers.onSelect ~= nil then
 				handlers.onSelect(instanceId)
 			end
-		end, "車庫是空的")
+		end, "Garage is empty")
 		showPreview(selected)
 		gachaBoard.update(state)
 
 		if upgradeNotice == "scrap" and upgradeCar == nil then
-			upgradeDetail.Text = "汽車已報廢，請重新選擇汽車。"
+			upgradeDetail.Text = "This car was scrapped. Pick another one."
 		elseif upgradeCar == nil then
-			upgradeDetail.Text = "請先選擇汽車。\n點擊列表中的車輛後才會送出強化。強化不扣金幣。"
+			upgradeDetail.Text = "Pick a car first.\nUpgrades only send after you click a row. Upgrades do not cost gold."
 		elseif upgradeCar.racing == true then
 			upgradeDetail.Text = string.format(
-				"%s\n%s　強化 +%d　性能 %s\n識別 %s\n這台車正在參賽，伺服器會拒絕強化與報廢。\n%s",
+				"%s\n%s  Upgrade +%d  Power %s\nId %s\nThis car is racing. The server will refuse upgrades and scrap.\n%s",
 				upgradeCar.displayName,
 				upgradeCar.qualityName,
 				upgradeCar.upgradeLevel,
@@ -620,7 +712,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			)
 		else
 			upgradeDetail.Text = string.format(
-				"%s\n%s　強化 +%d　性能 %s\n識別 %s\n%s\n結果只顯示伺服器實際抽到的那一個。",
+				"%s\n%s  Upgrade +%d  Power %s\nId %s\n%s\nOnly the result the server actually rolled is shown.",
 				upgradeCar.displayName,
 				upgradeCar.qualityName,
 				upgradeCar.upgradeLevel,
@@ -634,35 +726,35 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			and upgradeCar.racing ~= true
 			and upgradeCar.upgradeLevel < CarConfig.MaxUpgradeLevel
 		if upgradeCar == nil then
-			upgradeButton.Text = "請先選擇汽車"
+			upgradeButton.Text = "Pick a car"
 		elseif upgradeCar.racing == true then
-			upgradeButton.Text = "參賽中"
+			upgradeButton.Text = "Racing"
 		elseif upgradeCar.upgradeLevel >= CarConfig.MaxUpgradeLevel then
-			upgradeButton.Text = "已達 +10"
+			upgradeButton.Text = "Already +10"
 		else
-			upgradeButton.Text = string.format("強化：%s +%d", upgradeCar.displayName, upgradeCar.upgradeLevel)
+			upgradeButton.Text = string.format("Upgrade: %s +%d", upgradeCar.displayName, upgradeCar.upgradeLevel)
 		end
 		setEnabled(upgradeButton, canUpgrade)
 		fillCars(upgradeList, upgradeId, function(instanceId)
 			upgradeId = instanceId
 			upgradeNotice = nil
 			render()
-		end, "沒有可強化的車")
+		end, "No car to upgrade")
 
 		local shownCar = if autoBusy and racingCar ~= nil then racingCar else selected
-		local statusLine = "尚未開始自動競速。"
+		local statusLine = "Auto race has not started."
 		if autoState == "Running" then
-			statusLine = "自動競速進行中。停止會立刻取消這一場，這一場不發獎。"
+			statusLine = "Auto race is running. Stop cancels this round immediately, and this round pays nothing."
 		elseif autoState == "Stopping" then
-			statusLine = "正在停止自動競速。"
+			statusLine = "Stopping the auto race."
 		elseif singleRace then
-			statusLine = "單場競速進行中。"
+			statusLine = "A single race is in progress."
 		end
 		if shownCar == nil then
-			raceDetail.Text = "請先選擇一台你的車。\n" .. statusLine
+			raceDetail.Text = "Pick one of your cars first.\n" .. statusLine
 		else
 			raceDetail.Text = string.format(
-				"目前選擇：%s　+%d　性能 %s\n%s\n當前場次 %d　已完成 %d　累積 %d 測試金幣\n每場 %d，由伺服器結算。關閉面板也不會中斷。",
+				"Selected: %s  +%d  Power %s\n%s\nRound %d  Finished %d  Earned %d test gold\nEach race pays %d and is settled by the server. Closing this panel does not stop it.",
 				shownCar.displayName,
 				shownCar.upgradeLevel,
 				tostring(shownCar.power),
@@ -674,20 +766,20 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			)
 		end
 		local canStart = shownCar ~= nil and autoState == "Idle" and not singleRace
-		raceButton.Text = if autoBusy then "自動競速進行中" else "開始自動競速"
+		raceButton.Text = if autoBusy then "Auto race running" else "Start Auto Race"
 		setEnabled(raceButton, canStart)
 		stopButton.Visible = autoBusy
-		stopButton.Text = "停止自動競速"
+		stopButton.Text = "Stop Auto Race"
 		setEnabled(stopButton, autoState == "Running")
 		if autoBusy then
 			raceStatus.Visible = true
 			raceStatusTitle.Text = if autoState == "Stopping"
-				then "正在停止"
-				else string.format("自動競速　第 %d 場", math.max(autoRound, 1))
-			raceStatusBody.Text = string.format("已完成 %d 場\n累積 %d 測試金幣", autoCompleted, autoEarned)
+				then "Stopping"
+				else string.format("Auto race  Round %d", math.max(autoRound, 1))
+			raceStatusBody.Text = string.format("Finished %d\nEarned %d test gold", autoCompleted, autoEarned)
 		elseif singleRace then
 			raceStatus.Visible = true
-			raceStatusTitle.Text = "單場競速"
+			raceStatusTitle.Text = "Single race"
 			raceStatusBody.Text = racingText
 		else
 			raceStatus.Visible = false
@@ -696,7 +788,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			if handlers.onSelect ~= nil then
 				handlers.onSelect(instanceId)
 			end
-		end, "車庫是空的")
+		end, "Garage is empty")
 		applyLayout()
 	end
 
@@ -757,6 +849,20 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		end)
 	end
 
+	function api.isDealerIntroOpen(): boolean
+		return intro.Visible == true
+	end
+
+	function api.showDealerIntro(onFinished)
+		if intro.Visible == true then
+			return
+		end
+		introIndex = 1
+		introDone = onFinished
+		showIntroLine()
+		intro.Visible = true
+	end
+
 	function api.flash(outcomeId: string)
 		local color = FLASH[outcomeId] or Color3.new(1, 1, 1)
 		flash.BackgroundColor3 = color
@@ -768,6 +874,10 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 
 	function api.lockPull(nextLocked: boolean)
 		gachaBoard.setLocked(nextLocked == true)
+	end
+
+	function api.beginPullCooldown()
+		gachaBoard.beginPullCooldown()
 	end
 
 	function api.playPull(result, onDone)
@@ -791,7 +901,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 
 	function api.setRacing(active: boolean, text: string?)
 		racing = active
-		racingText = if active then (text or "競速進行中") else ""
+		racingText = if active then (text or "Race in progress") else ""
 		render()
 	end
 
@@ -816,9 +926,9 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			handlers.onPull()
 		end
 	end)
-	gachaBoard.setAutoSellHandler(function(enabled, maxQuality, confirmAll)
+	gachaBoard.setAutoSellHandler(function(qualities, confirmLegendary)
 		if handlers.onAutoSell ~= nil then
-			handlers.onAutoSell(enabled, maxQuality, confirmAll)
+			handlers.onAutoSell(qualities, confirmLegendary)
 		end
 	end)
 	upgradeButton.MouseButton1Click:Connect(function()
@@ -846,7 +956,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	raceStatusToggle.MouseButton1Click:Connect(function()
 		raceStatusOpen = not raceStatusOpen
 		raceStatusBody.Visible = raceStatusOpen
-		raceStatusToggle.Text = if raceStatusOpen then "收合" else "展開"
+		raceStatusToggle.Text = if raceStatusOpen then "Hide" else "Open"
 		applyLayout()
 	end)
 
