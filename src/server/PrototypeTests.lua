@@ -21,6 +21,8 @@ end
 local CarConfig = importShared("CarConfig")
 local UpgradeConfig = importShared("UpgradeConfig")
 local RaceConfig = importShared("RaceConfig")
+local RankConfig = importShared("RankConfig")
+local RaceCourse = importShared("RaceCourse")
 local PlaySessionService = importServer("PlaySessionService")
 
 local Tests = {}
@@ -188,8 +190,8 @@ local function testStudioStarterAndPull()
 	assertEqual(first.price, 500, "成交價格")
 	assertEqual(first.charged, true, "沒有扣款")
 	assertEqual(first.balance, CarConfig.TestStartingGold - 500, "餘額")
-	assertEqual(calls[1].max, 100, "品質抽籤範圍")
-	assertEqual(calls[2].max, 1, "重生階級被客戶端改成可以抽到第二台普通車")
+	assertEqual(calls[1].max, 10000, "品質抽籤範圍")
+	assertEqual(calls[2].max, 2, "重生階級被客戶端改成可以抽到一階測試車")
 	assertEqual(#session.inventory:ListCars(session.key), 2, "新車沒有進車庫")
 
 	local replay = service:dispatch(session.key, {
@@ -268,7 +270,7 @@ local function testStudioStarterAndPull()
 	assertTrue(GachaSoundConfig.legendaryMelody.soundId ~= GachaSoundConfig.reveal.Common[1].soundId, "傳說旋律與普通音相同")
 
 	now += 3
-	local catalogRng = scriptedRng({ 51, 1 })
+	local catalogRng = scriptedRng({ 5001, 1 })
 	local catalogService = newService()
 	local catalogSession = catalogService:createSession("catalog-player", {
 		gachaRng = catalogRng,
@@ -295,6 +297,16 @@ local function testStudioStarterAndPull()
 	return "抽車扣 500，重複請求不雙重發車"
 end
 
+local function grantRank(service, key: string, level: number)
+	for step = 1, level do
+		local raised = service:dispatch(key, {
+			action = "RankUp",
+			attemptToken = "grant-" .. key .. "-" .. tostring(step),
+		})
+		assertEqual(raised.ok, true, "測試升階失敗")
+	end
+end
+
 local function testUpgradeRules()
 	now = 14000
 	local successRng, successCalls = scriptedRng({ 16 })
@@ -302,6 +314,7 @@ local function testUpgradeRules()
 	local session = service:createSession("upgrade-player", {
 		upgradeRng = successRng,
 	})
+	grantRank(service, session.key, 1)
 	local before = balanceOf(session)
 	local starter = session.inventory:GetCar(session.key, session.selectedInstanceId)
 	local success = service:dispatch(session.key, {
@@ -333,6 +346,7 @@ local function testUpgradeRules()
 	local scrapSession = scrapService:createSession("scrap-player", {
 		upgradeRng = scrapRng,
 	})
+	grantRank(scrapService, scrapSession.key, 1)
 	local scrapCar = scrapSession.inventory:GetCar(scrapSession.key, scrapSession.selectedInstanceId)
 	scrapSession.inventory:SetUpgradeLevel(scrapSession.key, scrapCar.InstanceId, 9)
 	local destroyed = scrapService:dispatch(scrapSession.key, {
@@ -358,6 +372,7 @@ local function testUpgradeRules()
 	local capped = scrapService:createSession("capped-player", {
 		upgradeRng = scriptedRng({}),
 	})
+	grantRank(scrapService, capped.key, 1)
 	local cappedCar = capped.inventory:GetCar(capped.key, capped.selectedInstanceId)
 	capped.inventory:SetUpgradeLevel(capped.key, cappedCar.InstanceId, 10)
 	local blocked = scrapService:dispatch(capped.key, {
@@ -512,6 +527,7 @@ local function testBossAndOwnership()
 	local owner = service:createSession("owner-player")
 	local thief = service:createSession("thief-player")
 	local ownedId = owner.selectedInstanceId
+	grantRank(service, thief.key, 1)
 	local stolenUpgrade = service:dispatch(thief.key, {
 		action = "Upgrade",
 		attemptToken = "steal-upgrade",
@@ -574,6 +590,7 @@ local function testAutoRace()
 	assertEqual(first.autoState, "Running", "狀態不是 Running")
 	assertEqual(first.autoRound, 1, "第一場場次")
 	assertClose(first.duration, 10, "客戶端改寫了自動競速時間")
+	grantRank(service, session.key, 1)
 	local pull = service:dispatch(session.key, {
 		action = "Pull",
 		attemptToken = "auto-pull-0001",
@@ -809,28 +826,37 @@ local function testSceneAndVisuals()
 	assertEqual(folder, again, "重複建立了另一個場景")
 	assertEqual(createdAgain, false, "完整場景被重建")
 	assertEqual(folder:GetAttribute("Complete"), true, "場景未完成")
-	assertTrue(folder:FindFirstChild("PlayerSpawn") ~= nil, "沒有出生點")
 	assertEqual(folder:FindFirstChild("GachaMachine"), nil, "舊抽車機還在")
-	assertTrue(folder:FindFirstChild("UpgradeBench") ~= nil, "沒有強化工作台")
 	local bossGate = folder:FindFirstChild("BossGate")
 	assertTrue(bossGate ~= nil, "Boss 入口模型被刪除")
 	assertEqual(bossGate:GetAttribute("Hidden"), true, "Boss 入口沒有隱藏")
 	assertEqual(bossGate.Transparency, 1, "Boss 入口仍然看得到")
 	assertEqual(bossGate:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "Boss 入口仍可互動")
-	local garageSign = folder:FindFirstChild("GarageSign")
-	assertTrue(garageSign ~= nil, "車庫展示被刪除")
-	assertEqual(garageSign:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "車庫展示台仍有互動入口")
-	assertTrue(folder:FindFirstChild("GaragePad1") ~= nil, "沒有車庫展示位")
+	local garage = nil
+	for _, child in ipairs(folder:GetChildren()) do
+		if child.Name == "PrivateGarage" and child:GetAttribute("BayIndex") == 0 then
+			garage = child
+			break
+		end
+	end
+	assertTrue(garage ~= nil, "沒有私人車庫")
+	local spawn = garage:FindFirstChild("PlayerSpawn", true)
+	assertTrue(spawn ~= nil and spawn:IsA("BasePart"), "沒有出生點")
+	assertTrue(garage:FindFirstChild("UpgradeBench", true) ~= nil, "沒有強化工作台")
+	assertTrue(garage:FindFirstChild("DataScreen", true) ~= nil, "沒有競速資料螢幕")
+	assertTrue(garage:FindFirstChild("BestCarPodium", true) ~= nil, "沒有最強車展示台")
+	assertEqual(folder:FindFirstChild("GaragePad1", true), nil, "舊車庫格還在")
+	assertEqual(spawn:FindFirstChildWhichIsA("ProximityPrompt", true), nil, "出生點不該有互動")
 	local dealer = folder:FindFirstChild("R0Dealer")
 	assertTrue(dealer ~= nil and dealer:FindFirstChild("LaoPo", true) ~= nil, "沒有老破")
 	assertEqual(dealer:FindFirstChild("PriceSign", true), nil, "攤位還留著價格牌")
 	assertEqual(dealer:FindFirstChild("NameSign", true), nil, "攤位還留著店名")
-	assertTrue(dealer:FindFirstChild("OilDrum", true) ~= nil, "沒有廢土油桶")
 	assertTrue(dealer:FindFirstChild("Canopy", true) ~= nil, "沒有破棚")
 	local stallText = 0
 	for _, descendant in ipairs(dealer:GetDescendants()) do
+		local onShopSign = descendant.Name == "ShopSign" or descendant:FindFirstAncestor("ShopSign") ~= nil
 		local onPoolSign = descendant.Name == "PoolSign" or descendant:FindFirstAncestor("PoolSign") ~= nil
-		if onPoolSign then
+		if onShopSign or onPoolSign then
 			continue
 		end
 		if descendant:IsA("SurfaceGui") then
@@ -840,10 +866,16 @@ local function testSceneAndVisuals()
 		end
 	end
 	assertEqual(stallText, 0, "攤位上還有字")
+	local shopSign = dealer:FindFirstChild("ShopSign", true)
+	assertTrue(shopSign ~= nil and shopSign:IsA("BasePart"), "沒有店名招牌")
+	local shopLabel = shopSign:FindFirstChildWhichIsA("TextLabel", true)
+	assertTrue(shopLabel ~= nil and shopLabel.Text == "RUSTY'S SCRAP LOTTERY", "店名招牌文字不對")
 	local poolSign = dealer:FindFirstChild("PoolSign", true)
-	assertTrue(poolSign ~= nil and poolSign:IsA("BasePart"), "沒有獎池告示牌")
+	assertTrue(poolSign ~= nil and poolSign:IsA("BasePart"), "路前沒有 T0 告示牌")
 	local poolLabel = poolSign:FindFirstChildWhichIsA("TextLabel", true)
-	assertTrue(poolLabel ~= nil and poolLabel.Text == "NO LICENSE\nPRIZE POOL", "告示牌文字不對")
+	assertTrue(poolLabel ~= nil and poolLabel.Text == "T0 Rookie", "路前告示不是 T0 Rookie")
+	assertTrue(dealer:FindFirstChild("Walkway", true) ~= nil, "沒有走道")
+	assertTrue(dealer:FindFirstChild("OilDrum", true) ~= nil, "沒有廢土油桶")
 	local dealerPrompts = 0
 	local dealerPrompt = nil
 	for _, descendant in ipairs(dealer:GetDescendants()) do
@@ -879,12 +911,63 @@ local function testSceneAndVisuals()
 		end
 	end
 	assertEqual(dealerCount, 1, "重複建立了車商")
-	local upgradePrompt = folder:FindFirstChild("UpgradeBench"):FindFirstChildWhichIsA("ProximityPrompt", true)
-	local racePrompt = folder:FindFirstChild("RaceKiosk"):FindFirstChildWhichIsA("ProximityPrompt", true)
+	local upgradePrompt = garage:FindFirstChild("UpgradeBench", true):FindFirstChildWhichIsA("ProximityPrompt", true)
+	local raceHost = folder:FindFirstChild("RaceKiosk", true)
+	local racePrompt = raceHost and raceHost:FindFirstChildWhichIsA("ProximityPrompt", true)
 	assertTrue(upgradePrompt ~= nil, "強化台沒有互動")
+	assertEqual(upgradePrompt.Enabled, false, "T0 強化台可以互動")
+	local bays = {}
+	for _, child in ipairs(folder:GetChildren()) do
+		if child.Name == "PrivateGarage" and child:IsA("Model") then
+			table.insert(bays, child)
+		end
+	end
+	assertEqual(#bays, 4, "沒有預留四間車庫")
+	local floors = {}
+	for _, bayModel in ipairs(bays) do
+		local floor = bayModel:FindFirstChild("GarageFloor")
+		assertTrue(floor ~= nil and floor:IsA("BasePart"), "車庫沒有地板")
+		table.insert(floors, floor.Position)
+	end
+	for left = 1, #floors do
+		for right = left + 1, #floors do
+			assertTrue((floors[left] - floors[right]).Magnitude > 80, "車庫房間疊在一起")
+		end
+	end
+	local hiddenBench = garage:FindFirstChild("BenchTop", true)
+	assertTrue(hiddenBench ~= nil and hiddenBench:IsA("BasePart") and hiddenBench.Transparency == 1, "T0 看得到強化台")
+	local fusion = garage:FindFirstChild("CarFusion", true)
+	local fusionPart = fusion and fusion:FindFirstChildWhichIsA("BasePart", true)
+	assertTrue(fusionPart ~= nil and fusionPart:IsA("BasePart") and fusionPart.Transparency == 1, "T0 看得到合成器")
+	local podiumPart = garage:FindFirstChild("BestCarPodium", true)
+	local podiumFace = podiumPart and podiumPart:FindFirstChildWhichIsA("BasePart", true)
+	assertTrue(podiumFace ~= nil and podiumFace:IsA("BasePart") and podiumFace.Transparency == 1, "T0 看得到展示台")
 	assertTrue(racePrompt ~= nil, "競速入口沒有互動")
 	assertEqual(racePrompt.ActionText, "Open Race", "競速入口不該直接開賽")
-	local startLine = folder:FindFirstChild("RaceStart", true)
+	local roof = garage:FindFirstChild("GarageRoof", true)
+	assertTrue(roof ~= nil and roof:IsA("BasePart") and roof.Transparency < 0.05, "車庫沒有實心屋頂")
+	assertEqual(spawn.Transparency, 1, "重生點還看得到")
+	assertEqual(folder:FindFirstChild("ZoneLabel", true), nil, "地圖大字還在")
+	assertTrue(garage:FindFirstChild("WallWest", true) ~= nil, "車庫沒有西牆")
+	assertTrue(garage:FindFirstChild("WallNorth", true) ~= nil, "車庫沒有北牆")
+	assertTrue(garage:FindFirstChild("WallSouth", true) ~= nil, "車庫沒有南牆")
+	assertTrue(garage:FindFirstChild("TestPad", true) ~= nil, "沒有放測試車的位置")
+	local exitModel = garage:FindFirstChild("GarageExit", true)
+	local exitPrompt = exitModel and exitModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+	assertTrue(exitPrompt ~= nil, "牆上的門不能靠近互動")
+	assertEqual(exitPrompt.ObjectText, "Lobby", "門沒有通往大廳")
+	local PrivateGarage = importServer("PrivateGarage")
+	local track = folder:FindFirstChild("Track")
+	local startLine = track and track:FindFirstChild("RaceStart")
+	local origin = RaceConfig.sample(0)
+	local shift = PrivateGarage.RaceShift
+	assertTrue(startLine ~= nil, "沒有起點")
+	assertTrue(math.abs(startLine.Position.X - (origin.x + shift.X)) < 0.4, "起跑線離開了原賽道")
+	assertTrue(math.abs(startLine.Position.Z - (origin.z + shift.Z)) < 0.4, "起跑線離開了原賽道")
+	local glass = garage:FindFirstChild("ScreenGlass", true)
+	local benchTop = garage:FindFirstChild("BenchTop", true)
+	assertTrue(glass ~= nil and benchTop ~= nil and glass:IsA("BasePart") and benchTop:IsA("BasePart"), "資料螢幕或工作台缺少面板")
+	assertTrue(glass.Position.X < benchTop.Position.X, "資料螢幕沒有在強化台左側")
 	assertTrue(startLine ~= nil, "沒有起點")
 	local finishLine = folder:FindFirstChild("RaceFinish", true)
 	assertTrue(finishLine ~= nil, "沒有終點")
@@ -896,9 +979,9 @@ local function testSceneAndVisuals()
 		local half = piece.Size * 0.5
 		return (piece.CFrame * Vector3.new(xSign * half.X, half.Y, 0)).Y
 	end
-	local deck = folder:FindFirstChild("SweeperDeck7", true)
-	local leftShoulder = folder:FindFirstChild("SweeperShoulderL7", true)
-	local rightShoulder = folder:FindFirstChild("SweeperShoulderR7", true)
+	local deck = track:FindFirstChild("SweeperDeck7")
+	local leftShoulder = track:FindFirstChild("SweeperShoulderL7")
+	local rightShoulder = track:FindFirstChild("SweeperShoulderR7")
 	assertTrue(deck ~= nil and leftShoulder ~= nil and rightShoulder ~= nil, "彎道凹槽零件不存在")
 	local deckLeft = cornerY(deck, -1)
 	local deckRight = cornerY(deck, 1)
@@ -914,10 +997,9 @@ local function testSceneAndVisuals()
 	for _, child in ipairs(folder:GetChildren()) do
 		if child.Name == "DisplayCar" then
 			displays += 1
-			assertEqual(child:GetAttribute("DisplayOnly"), true, "展示車被當成玩家資料")
 		end
 	end
-	assertEqual(displays, 5, "展示車數量")
+	assertEqual(displays, 0, "舊的目錄展示車還留在場景外")
 
 	local bucket = Instance.new("Folder")
 	bucket.Name = "CarForgeTaxVisualTest"
@@ -955,8 +1037,15 @@ local function testSceneAndVisuals()
 	assertTrue(size.X >= 1.3 and size.X <= 2, "車寬超出概念尺寸")
 	assertTrue(size.Y >= 0.8 and size.Y <= 1.6, "車高超出概念尺寸")
 	assertTrue(size.Z >= 2.4 and size.Z <= 3.4, "車長超出概念尺寸")
-	assertEqual(common:FindFirstChild("Body").Color, CarVisualFactory.qualityColor("Common"), "普通車顏色")
-	assertEqual(legendary:FindFirstChild("Body").Color, CarVisualFactory.qualityColor("Legendary"), "傳說車顏色")
+	local CarCatalog = importShared("CarCatalog")
+	local function paintColor(modelId: string): Color3
+		local car = CarCatalog.getByModelId(modelId)
+		return Color3.fromRGB(car.Paint[1], car.Paint[2], car.Paint[3])
+	end
+	assertEqual(common:FindFirstChild("Body").Color, paintColor("test_common_r0"), "普通車烤漆")
+	assertEqual(legendary:FindFirstChild("Body").Color, paintColor("test_legendary_r0"), "傳說車烤漆")
+	assertTrue(common:FindFirstChild("Body").Color ~= CarVisualFactory.qualityColor("Common"), "普通車身被塗成品質色")
+	assertTrue(legendary:FindFirstChild("Body").Color ~= CarVisualFactory.qualityColor("Legendary"), "傳說車身被塗成品質色")
 	assertEqual(common:FindFirstChild("LegendarySpark", true), nil, "普通車不該有粒子")
 	assertTrue(legendary:FindFirstChild("LegendarySpark", true) ~= nil, "傳說車沒有粒子")
 	assertTrue(legendary:FindFirstChild("LegendaryGlow", true) ~= nil, "傳說車沒有發光")
@@ -981,7 +1070,7 @@ local function testAutoSell()
 	now = 32000
 	local service = newService()
 	local session = service:createSession("sell-player", {
-		gachaRng = scriptedRng({ 1, 1, 1, 1, 51, 1, 81, 1, 1, 1, 96, 1, 100, 1, 1, 1 }),
+		gachaRng = scriptedRng({ 1, 1, 1, 1, 5001, 1, 8001, 1, 1, 1, 9501, 1, 10000, 1, 1, 1 }),
 	})
 	local starterId = session.selectedInstanceId
 
@@ -996,7 +1085,7 @@ local function testAutoSell()
 	local state = service:dispatch(session.key, { action = "GetState" })
 	assertEqual(state.autoSell.enabled, false, "自動販賣預設不是關閉")
 	assertQualities(state.autoSell.qualities, {}, "預設仍有勾選")
-	assertQualities(state.autoSell.keeps, { "Common", "Uncommon", "Rare", "Epic", "Legendary" }, "預設沒有全部保留")
+	assertQualities(state.autoSell.keeps, { "Common", "Uncommon", "Rare", "Epic" }, "T0 預設保留清單")
 	local tampered = service:dispatch(session.key, {
 		action = "GetState",
 		autoSell = { enabled = true, qualities = { "Legendary" }, maxQuality = "Legendary" },
@@ -1021,6 +1110,7 @@ local function testAutoSell()
 	assertEqual(AutoSellConfig.price(0, "Rare"), 300, "稀有售價")
 	assertEqual(AutoSellConfig.price(0, "Epic"), 650, "史詩售價")
 	assertEqual(AutoSellConfig.price(0, "Legendary"), 2000, "傳說售價")
+	assertEqual(AutoSellConfig.price(1, "Common"), 100, "升級後售價變了")
 
 	local legacy = service:dispatch(session.key, {
 		action = "SetAutoSell",
@@ -1039,7 +1129,7 @@ local function testAutoSell()
 	})
 	assertEqual(epicOnly.ok, true, "不能只勾史詩")
 	assertQualities(epicOnly.autoSell.sells, { "Epic" }, "只勾史詩卻連帶較低品質")
-	assertQualities(epicOnly.autoSell.keeps, { "Common", "Uncommon", "Rare", "Legendary" }, "只勾史詩時保留清單不對")
+	assertQualities(epicOnly.autoSell.keeps, { "Common", "Uncommon", "Rare" }, "只勾史詩時保留清單不對")
 
 	local priced = service:dispatch(session.key, {
 		action = "SetAutoSell",
@@ -1053,7 +1143,7 @@ local function testAutoSell()
 	assertEqual(priced.autoSell.enabled, true, "有勾選卻顯示關閉")
 	assertQualities(priced.autoSell.qualities, { "Common", "Rare" }, "勾選被改成連續門檻")
 	assertQualities(priced.autoSell.sells, { "Common", "Rare" }, "會賣的品質不對")
-	assertQualities(priced.autoSell.keeps, { "Uncommon", "Epic", "Legendary" }, "中間品質被自動勾上")
+	assertQualities(priced.autoSell.keeps, { "Uncommon", "Epic" }, "中間品質被自動勾上")
 
 	local junk = service:dispatch(session.key, {
 		action = "SetAutoSell",
@@ -1116,7 +1206,7 @@ local function testAutoSell()
 	})
 	assertEqual(narrowed.ok, true, "取消勾選沒有更新")
 	assertQualities(narrowed.autoSell.qualities, { "Rare" }, "取消普通後仍一起勾著")
-	assertQualities(narrowed.autoSell.keeps, { "Common", "Uncommon", "Epic", "Legendary" }, "取消後保留清單不對")
+	assertQualities(narrowed.autoSell.keeps, { "Common", "Uncommon", "Epic" }, "取消後保留清單不對")
 
 	now += 3
 	local commonKept = service:dispatch(session.key, {
@@ -1146,13 +1236,27 @@ local function testAutoSell()
 		confirmLegendary = false,
 		price = 1,
 	})
-	assertEqual(denied.reason, PlaySessionService.Reason.NeedsConfirm, "傳說沒有要求確認")
-	assertQualities(denied.autoSell.qualities, { "Rare" }, "未確認卻勾上傳說")
-	assertEqual(denied.autoSell.enabled, true, "未確認把其他勾選清掉")
+	assertEqual(denied.reason, PlaySessionService.Reason.InvalidRequest, "T0 接受了傳說自動販賣")
+	assertQualities(denied.autoSell.qualities, { "Rare" }, "非法清單改寫了 T0 勾選")
+	assertEqual(denied.autoSell.poolId, "T0", "拒絕時回了別的池")
+
+	grantRank(service, session.key, 1)
+	local held = service:dispatch(session.key, {
+		action = "SetAutoSell",
+		attemptToken = "sell-legendary-held",
+		poolId = "T1",
+		stationId = "T1Dealer",
+		qualities = { "Rare", "Legendary" },
+		confirmLegendary = false,
+	})
+	assertEqual(held.reason, PlaySessionService.Reason.NeedsConfirm, "傳說沒有要求確認")
+	assertQualities(held.autoSell.qualities, { "Rare" }, "未確認卻勾上傳說")
 
 	local armed = service:dispatch(session.key, {
 		action = "SetAutoSell",
 		attemptToken = "sell-legendary-arm",
+		poolId = "T1",
+		stationId = "T1Dealer",
 		qualities = { "Rare", "Legendary" },
 		confirmLegendary = true,
 		sellPrice = 999999,
@@ -1160,15 +1264,25 @@ local function testAutoSell()
 	assertEqual(armed.autoSell.enabled, true, "確認後沒有啟用")
 	assertQualities(armed.autoSell.qualities, { "Rare", "Legendary" }, "確認後把其他品質改掉")
 	assertQualities(armed.autoSell.keeps, { "Common", "Uncommon", "Epic" }, "確認傳說時自動勾了較低品質")
+	local t0View = service:dispatch(session.key, {
+		action = "GetState",
+		poolId = "T0",
+		stationId = "R0Dealer",
+	})
+	assertQualities(t0View.autoSell.qualities, { "Rare" }, "傳說勾選作用到 T0")
+	assertEqual(t0View.pool.rates[1].qualityId, "Common", "T0 掉率起點")
+	assertEqual(#t0View.pool.rates, 4, "T0 掉率列數")
 	now += 3
 	local soldLegendary = service:dispatch(session.key, {
 		action = "Pull",
 		attemptToken = "sell-legendary",
+		poolId = "T1",
+		stationId = "T1Dealer",
 	})
 	assertEqual(soldLegendary.sold, true, "確認後沒有賣掉傳說")
 	assertEqual(soldLegendary.qualityId, "Legendary", "傳說出售後結果被換掉")
 	assertEqual(soldLegendary.sellPrice, 2000, "傳說售價不對")
-	assertEqual(soldLegendary.balance, armed.balance - 500 + 2000, "傳說回收金額不對")
+	assertEqual(soldLegendary.balance, armed.balance - 1000 + 2000, "傳說回收金額不對")
 	assertEqual(session.inventory:GetCar(session.key, soldLegendary.instanceId), nil, "已售傳說還在車庫")
 	assertTrue(hasModel(soldLegendary.discovered, "test_legendary_r0"), "已售傳說從圖鑑消失")
 	assertTrue(session.inventory:GetCar(session.key, epic.instanceId) ~= nil, "沒勾的史詩被自動賣掉")
@@ -1178,6 +1292,8 @@ local function testAutoSell()
 	local dropped = service:dispatch(session.key, {
 		action = "SetAutoSell",
 		attemptToken = "sell-uncheck-legendary",
+		poolId = "T1",
+		stationId = "T1Dealer",
 		qualities = { "Rare" },
 	})
 	assertEqual(dropped.ok, true, "取消傳說沒有更新")
@@ -1186,6 +1302,8 @@ local function testAutoSell()
 	local cleared = service:dispatch(session.key, {
 		action = "SetAutoSell",
 		attemptToken = "sell-clear",
+		poolId = "T1",
+		stationId = "T1Dealer",
 		qualities = {},
 	})
 	assertEqual(cleared.ok, true, "全部取消失敗")
@@ -1196,6 +1314,7 @@ local function testAutoSell()
 	local afterClear = service:dispatch(session.key, {
 		action = "Pull",
 		attemptToken = "sell-after-clear",
+		stationId = "R0Dealer",
 	})
 	assertEqual(afterClear.sold, false, "全部不選仍賣掉普通車")
 	assertEqual(afterClear.qualityId, "Common", "清空後的抽車結果不對")
@@ -1241,6 +1360,7 @@ local function testAutoSell()
 	assertEqual(during.sellPrice, 100, "競速中的新車售價不對")
 	assertTrue(racer.inventory:GetCar(racer.key, starterId) ~= nil, "競速中的車被賣掉")
 	assertEqual(started.lockedInstanceId or started.autoInstanceId, starterId, "鎖定的不是參賽車")
+	grantRank(raceService, racer.key, 1)
 	local upgrade = raceService:dispatch(racer.key, {
 		action = "Upgrade",
 		attemptToken = "sell-upgrade-racing",
@@ -1272,6 +1392,292 @@ local function testAutoSell()
 	return "自動販賣只處理新抽到的車，售價與重送都由伺服器決定"
 end
 
+local function testGarageReadout()
+	now = 26000
+	local service = newService()
+	local session = service:createSession("garage-readout")
+	local starter = session.inventory:ListCars(session.key)[1]
+	local before = balanceOf(session)
+	local listed = service:dispatch(session.key, { action = "GetState" })
+	assertEqual(listed.rebirthLevel, 0, "職業等級不是 T0")
+	assertEqual(listed.rankId, "T0", "職業代號")
+	assertEqual(listed.rankName, "Rookie", "職業名稱")
+	local view = service:garageView(session.key, now)
+	assertEqual(view.rebirthLevel, 0, "車庫沒有讀到職業等級")
+	assertEqual(view.status, "IDLE", "沒放車卻顯示測試中")
+	assertEqual(view.currentName, nil, "還沒放上車不該有測試資料")
+	assertEqual(view.lapTime, nil, "還沒放上車不該有單圈時間")
+	assertEqual(view.instanceId, nil, "畫面資料帶了實例 ID")
+	assertEqual(view.best.instanceId, nil, "展示資料帶了實例 ID")
+	assertEqual(view.best.displayName, "Common Test Car", "最強車應該是起始車")
+	assertEqual(view.best.power, 100, "起始車性能")
+	assertEqual(view.bench, nil, "沒親自選車時工作台不該有車")
+
+	local rare = session.inventory:CreateCar(session.key, "test_rare_r0", 0)
+	assertTrue(rare ~= nil, "沒有建立稀有車")
+	view = service:garageView(session.key, now)
+	assertEqual(view.currentName, nil, "最強車不該自動變成測試車")
+	assertEqual(view.best.displayName, "Rare Test Car", "稀有車性能應該更高")
+	assertEqual(view.best.power, 120, "稀有車性能")
+
+	local raised = session.inventory:SetUpgradeLevel(session.key, starter.InstanceId, 2)
+	assertTrue(raised ~= nil, "沒有把普通車強化到 +2")
+	view = service:garageView(session.key, now)
+	assertEqual(view.best.displayName, "Common Test Car", "同性能時沒有優先較高強化")
+	assertEqual(view.best.upgradeLevel, 2, "同性能的強化等級")
+	assertEqual(view.best.power, 120, "同性能數值")
+
+	local picked = service:dispatch(session.key, {
+		action = "SelectCar",
+		instanceId = starter.InstanceId,
+	})
+	assertEqual(picked.ok, true, "選車失敗")
+	view = service:garageView(session.key, now)
+	assertEqual(view.bench.displayName, "Common Test Car", "選了車卻沒有放到工作台")
+	assertEqual(view.bench.instanceId, nil, "工作台帶了實例 ID")
+	assertEqual(view.currentName, nil, "選車不該開始測試圈")
+
+	local lap = service:dispatch(session.key, { action = "TestLap" })
+	assertEqual(lap.ok, true, "測試圈失敗")
+	assertEqual(balanceOf(session), before, "測試圈發了錢")
+	view = service:garageView(session.key, now)
+	local plan = RaceConfig.describe(120, false)
+	local oneLap = plan.duration / RaceConfig.Layout.visualLaps
+	assertEqual(view.status, "TESTING", "放上車沒有開始計時")
+	assertEqual(view.currentName, "Common Test Car", "測試圈不是這台車")
+	assertEqual(view.upgradeLevel, 2, "測試圈等級")
+	assertEqual(view.power, 120, "測試圈性能")
+	assertEqual(view.lapTime, oneLap, "單圈時間")
+	assertEqual(view.elapsed, 0, "剛放上車不該已經跑完")
+	assertEqual(view.test.instanceId, nil, "測試車帶了實例 ID")
+
+	session.inventory:RemoveCar(session.key, starter.InstanceId)
+	session.inventory:RemoveCar(session.key, rare.InstanceId)
+	view = service:garageView(session.key, now)
+	assertEqual(view.best, nil, "沒車時還有展示車")
+	assertEqual(view.currentName, nil, "沒車時還有名稱")
+	assertEqual(view.upgradeLevel, nil, "沒車時還有等級")
+	assertEqual(view.bench, nil, "車被移走後工作台還有車")
+	assertEqual(view.status, "IDLE", "空車庫不該在測試")
+	local ranked = service:dispatch(session.key, {
+		action = "RankUp",
+		attemptToken = "rank-up-01",
+	})
+	assertEqual(ranked.ok, true, "不能直接升級")
+	assertEqual(ranked.rankId, "T1", "升級後不是 T1")
+	assertEqual(ranked.rankName, "Street Racer", "T1 名稱")
+	local replay = service:dispatch(session.key, {
+		action = "RankUp",
+		attemptToken = "rank-up-01",
+	})
+	assertEqual(replay.rankId, "T1", "同一請求又升了一級")
+	local line = service:leaderLine(session.key)
+	assertEqual(line.rank, "T1 Street Racer", "列表沒有職業")
+	assertEqual(line.gold, balanceOf(session), "列表金幣不對")
+	return "車庫展示依性能排序，測試圈不發錢"
+end
+
+local function testRankPace()
+	assertEqual(RankConfig.speedBonus(0), 0, "T0 加成")
+	assertEqual(RankConfig.speedBonus(1), 0.05, "T1 加成")
+	assertEqual(RankConfig.speedBonus(10), 0.5, "T10 加成")
+	assertEqual(RankConfig.speedBonus(11), 0, "超過 T10")
+	local fastest = RankConfig.scaleDuration(RaceConfig.MinDuration, 10)
+	assertTrue(fastest < RaceConfig.MinDuration, "最短時間把 T 加成吃掉了")
+	assertClose(fastest, RaceConfig.MinDuration / 1.5, "T10 時間")
+	assertEqual(RankConfig.boostLabel(3), "T3 +15%", "加成文字")
+
+	local testCourse = RaceCourse.testOval()
+	assertEqual(testCourse.pays, false, "測試圈會發錢")
+	assertEqual(testCourse.reward, 0, "測試圈獎金")
+	assertEqual(RaceCourse.ready(testCourse), false, "測試圈被當成正式賽道")
+	local blocked = RaceCourse.begin(testCourse, 10, 10)
+	assertEqual(blocked, nil, "測試圈可以從正式賽道開賽")
+	local future = RaceCourse.officialSlot("future-main")
+	assertEqual(future.kind, RaceCourse.Kind.PointToPoint, "正式賽道不是起終點")
+	assertEqual(future.built, false, "正式賽道被建出來了")
+	assertEqual(future.length, nil, "正式賽道長度被先決定")
+	assertEqual(future.reward, nil, "正式賽道獎金被先決定")
+	assertEqual(RaceCourse.ready(future), false, "未設定的正式賽道可以開")
+	assertEqual(RaceCourse.begin(future, 10, 1), nil, "未設定的正式賽道開賽了")
+
+	now = 42000
+	local service = newService()
+	local session = service:createSession("rank-pace")
+	local car = session.inventory:ListCars(session.key)[1]
+	local before = balanceOf(session)
+	local started = service:dispatch(session.key, {
+		action = "StartAutoRace",
+		instanceId = car.InstanceId,
+		attemptToken = "pace-auto-1",
+	})
+	assertEqual(started.ok, true, "自動競速沒開始")
+	assertClose(started.duration, 10, "T0 不該改時間")
+	local raised = service:dispatch(session.key, {
+		action = "RankUp",
+		attemptToken = "pace-rank-1",
+	})
+	assertEqual(raised.rankId, "T1", "比賽中沒有升到 T1")
+	local mid = service:dispatch(session.key, { action = "GetState" })
+	assertClose(mid.raceDuration, 10, "比賽中升級改了這一場")
+	service:advanceAll(now + 10)
+	assertEqual(balanceOf(session), before + RaceConfig.NormalReward, "T 加成改了 45 金幣")
+	local nextHeat = service:dispatch(session.key, { action = "GetState" })
+	assertClose(nextHeat.raceDuration, 10 / 1.05, "下一場沒有用 T1")
+	assertEqual(nextHeat.raceRank, 1, "下一場沒記下 T1")
+
+	now = 52000
+	local laps = newService()
+	local lapSession = laps:createSession("rank-lap")
+	local starter = lapSession.inventory:ListCars(lapSession.key)[1]
+	local plan = RaceConfig.describe(100, false)
+	local oneLap = plan.duration / RaceConfig.Layout.visualLaps
+	local lapBefore = balanceOf(lapSession)
+	local opened = laps:dispatch(lapSession.key, { action = "TestLap" })
+	assertEqual(opened.ok, true, "測試圈失敗")
+	local view = laps:garageView(lapSession.key, now)
+	assertClose(view.lapTime, oneLap, "T0 測試圈時間")
+	assertEqual(view.currentLap, 1, "現在圈數")
+	assertEqual(view.lapsCompleted, 0, "完成圈數")
+	assertEqual(view.rankBoost, "T0 +0%", "這一圈加成")
+	assertEqual(view.test.instanceId, nil, "測試資料帶了實例 ID")
+	assertEqual(view.power, 100, "加成改了性能")
+	laps:dispatch(lapSession.key, {
+		action = "RankUp",
+		attemptToken = "pace-lap-rank",
+	})
+	view = laps:garageView(lapSession.key, now + 0.4)
+	assertClose(view.lapTime, oneLap, "這一圈提前變快")
+	assertEqual(view.lapsCompleted, 0, "還沒跑完就計圈")
+	assertEqual(view.rankBoost, "T0 +0%", "這一圈加成被換掉")
+	view = laps:garageView(lapSession.key, now + oneLap)
+	assertEqual(view.lapsCompleted, 1, "下一圈沒有接上")
+	assertEqual(view.currentLap, 2, "現在不是下一圈")
+	assertClose(view.bestLap, oneLap, "最佳圈")
+	assertClose(view.lapTime, oneLap / 1.05, "下一圈沒有 T1")
+	assertEqual(view.rankBoost, "T1 +5%", "下一圈加成")
+	assertEqual(balanceOf(lapSession), lapBefore, "測試圈發了錢")
+	assertTrue(starter ~= nil, "沒有起始車")
+	return "T 加成從下一場或下一圈生效，測試圈仍不發錢"
+end
+
+local function testRankGate()
+	now = 52000
+	local rng = scriptedRng({ 16 })
+	local service = newService()
+	local session = service:createSession("rank-gate-player", {
+		upgradeRng = rng,
+	})
+	local starter = session.inventory:GetCar(session.key, session.selectedInstanceId)
+	local before = #session.inventory:ListCars(session.key)
+	local blocked = service:dispatch(session.key, {
+		action = "Upgrade",
+		attemptToken = "t0-block",
+		instanceId = starter.InstanceId,
+		outcome = "GreatSuccess",
+	})
+	assertEqual(blocked.ok, false, "T0 可以強化")
+	assertEqual(blocked.reason, PlaySessionService.Reason.RankLocked, "T0 強化沒有被擋下")
+	assertEqual(session.inventory:GetCar(session.key, starter.InstanceId).UpgradeLevel, 0, "T0 強化改了等級")
+	grantRank(service, session.key, 1)
+	assertEqual(#session.inventory:ListCars(session.key), before, "升階刪了車")
+	local opened = service:dispatch(session.key, {
+		action = "Upgrade",
+		attemptToken = "t1-open-01",
+		instanceId = starter.InstanceId,
+	})
+	assertEqual(opened.ok, true, "T1 不能強化")
+	assertEqual(opened.upgradeLevel, 1, "T1 強化沒有升等")
+	return "T0 不能強化，升階不刪車"
+end
+
+local function testDealerBinding()
+	now = 90000
+	local lockedService = newService()
+	local locked = lockedService:createSession("locked-dealer")
+	local denied = lockedService:dispatch(locked.key, {
+		action = "Pull",
+		attemptToken = "locked-t1-dealer",
+		stationId = "T1Dealer",
+	})
+	assertEqual(denied.reason, PlaySessionService.Reason.PoolLocked, "未解鎖仍能用 T1 車商")
+	assertEqual(#locked.inventory:ListCars(locked.key), 1, "未解鎖抽車發了車")
+
+	local service = newService()
+	local session = service:createSession("dealer-player", {
+		gachaRng = scriptedRng({ 1, 1, 1, 1, 10000, 1 }),
+	})
+	grantRank(service, session.key, 10)
+	local spoof = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "spoof-t10-pool",
+		poolId = "T10",
+	})
+	assertEqual(spoof.reason, PlaySessionService.Reason.InvalidRequest, "客戶端可以直接指定 T10 池")
+	assertEqual(#session.inventory:ListCars(session.key), 1, "指定池的抽車發了車")
+	local mismatch = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "t0-dealer-t10-pool",
+		stationId = "R0Dealer",
+		poolId = "T10",
+	})
+	assertEqual(mismatch.reason, PlaySessionService.Reason.InvalidRequest, "T0 車商接受了別的池")
+	local pulled = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "t0-dealer-rank10",
+		stationId = "R0Dealer",
+	})
+	assertEqual(pulled.ok, true, "T0 車商抽車失敗")
+	assertEqual(pulled.price, 500, "T0 車商改了價格")
+	assertTrue(CarConfig.qualityRank(pulled.qualityId) <= 4, "T0 車商抽出表外品質")
+	now += 3
+	local preview = service:dispatch(session.key, {
+		action = "GetState",
+		previewPool = "T10",
+	})
+	assertEqual(preview.preview.id, "T10", "Studio 不能預覽高階池")
+	assertEqual(preview.pool.id, "T0", "預覽改掉正式抽車池")
+	assertEqual(preview.preview.unlocked, true, "預覽沒有回傳池子")
+	local again = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "t0-after-preview",
+		stationId = "R0Dealer",
+	})
+	assertEqual(again.ok, true, "預覽後 T0 抽車失敗")
+	assertTrue(CarConfig.qualityRank(again.qualityId) <= 4, "預覽後 T0 抽出表外品質")
+	now += 3
+	local fromT1 = service:dispatch(session.key, {
+		action = "Pull",
+		attemptToken = "t1-dealer-legendary",
+		stationId = "T1Dealer",
+	})
+	assertEqual(fromT1.ok, true, "T1 車商抽車失敗")
+	assertEqual(fromT1.qualityId, "Legendary", "T1 車商沒有照自己的池抽")
+	assertEqual(fromT1.price, 1000, "T1 價格被改掉")
+	assertTrue(CarConfig.qualityRank(fromT1.qualityId) <= 5, "T1 車商抽出表外品質")
+
+	local live = PlaySessionService.new({
+		isStudio = false,
+		clock = function()
+			return now
+		end,
+	})
+	local liveSession = live:createSession("live-preview")
+	local hidden = live:dispatch(liveSession.key, {
+		action = "GetState",
+		previewPool = "T10",
+	})
+	assertEqual(hidden.reason, PlaySessionService.Reason.InvalidRequest, "正式環境可以預覽高階池")
+
+	local basePower = CarConfig.calculatePower(0, "Common", 0)
+	local basePlan = RaceConfig.describe(basePower, false)
+	local once = RankConfig.scalePlan(basePlan, 10)
+	assertClose(once.duration, basePlan.duration / 1.5, "T10 加速被套了兩次或沒有套用")
+	assertEqual(once.rankBonus, 0.5, "加速倍率")
+	assertClose(once.speed, basePlan.speed * 1.5, "速度加成")
+	return "車商池由伺服器決定，加速只套一次"
+end
+
 function Tests.run()
 	local cases = {
 		{ "競速時間、短圈與 Boss 緩速", testRaceMath },
@@ -1283,6 +1689,10 @@ function Tests.run()
 		{ "正式環境不發測試資源", testLiveServerHasNoTestGrant },
 		{ "場景與玩具車模型", testSceneAndVisuals },
 		{ "自動販賣", testAutoSell },
+		{ "私人車庫資料", testGarageReadout },
+		{ "職業速度加成", testRankPace },
+		{ "T0 不能強化", testRankGate },
+		{ "車商池與加速只套一次", testDealerBinding },
 	}
 
 	local results = {}

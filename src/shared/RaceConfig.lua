@@ -89,7 +89,8 @@ function RaceConfig.visualAlpha(alpha: number): number
 	return launchDistance + cruise * (progress - launch)
 end
 
--- 競速換算用的性能兩端都從 CarConfig 讀，避免再寫一份性能公式。
+-- 競速換算的兩端仍沿用原本的尺度，避免把既有完賽時間整段重排。
+-- 這個上限含舊的重生餘量，但 calculatePower 不會再把 T 等級加進車輛。
 function RaceConfig.powerBounds(): (number, number)
 	local qualityBonus, qualityReason = CarConfig.getQualityBonus("Legendary")
 	local rebirthBonus, rebirthReason = CarConfig.getRebirthBonus(CarConfig.MaxRebirthLevel)

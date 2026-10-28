@@ -1,22 +1,76 @@
 -- 玩具車只負責顯示。車款、等級與性能的權威資料仍在伺服器車庫。
-local CarVisualFactory = {}
-
-local function palette()
-	return {
-		Common = Color3.fromRGB(245, 245, 245),
-		Uncommon = Color3.fromRGB(64, 196, 96),
-		Rare = Color3.fromRGB(58, 132, 255),
-		Epic = Color3.fromRGB(168, 78, 255),
-		Legendary = Color3.fromRGB(255, 140, 32),
-	}
+-- 品質色只用於介面與特效。車身烤漆來自車款目錄。
+local function importShared(moduleName: string)
+	if game ~= nil then
+		local sharedFolder = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+		return require(sharedFolder:WaitForChild(moduleName))
+	end
+	return require("./" .. moduleName)
 end
 
+local CarConfig = importShared("CarConfig")
+local CarCatalog = importShared("CarCatalog")
+
+local CarVisualFactory = {}
+
 function CarVisualFactory.qualityColor(qualityId: any): Color3
-	local color = palette()[qualityId]
-	if color == nil then
+	local quality = if type(qualityId) == "string" then CarConfig.getQuality(qualityId) else nil
+	local channels = if quality ~= nil then quality.UiColor else nil
+	if type(channels) ~= "table" then
 		return Color3.fromRGB(150, 150, 150)
 	end
-	return color
+	return Color3.fromRGB(channels[1], channels[2], channels[3])
+end
+
+function CarVisualFactory.qualityTextColor(qualityId: any): Color3
+	if type(qualityId) == "string" and CarConfig.needsLightRim(qualityId) then
+		return Color3.fromRGB(226, 230, 236)
+	end
+	return CarVisualFactory.qualityColor(qualityId)
+end
+
+function CarVisualFactory.applyQualityText(item: Instance, qualityId: any)
+	if not item:IsA("TextLabel") and not item:IsA("TextButton") then
+		return
+	end
+	item.TextColor3 = CarVisualFactory.qualityTextColor(qualityId)
+	local existing = item:FindFirstChild("QualityInk")
+	if existing ~= nil then
+		existing:Destroy()
+	end
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "QualityInk"
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+	stroke.Thickness = 1
+	if type(qualityId) == "string" and CarConfig.needsDarkInk(qualityId) then
+		stroke.Color = Color3.fromRGB(42, 32, 18)
+		stroke.Parent = item
+	elseif type(qualityId) == "string" and CarConfig.needsLightRim(qualityId) then
+		stroke.Color = Color3.fromRGB(226, 230, 236)
+		stroke.Parent = item
+	else
+		stroke:Destroy()
+	end
+end
+
+function CarVisualFactory.markChip(chip: Instance, qualityId: any)
+	if not chip:IsA("GuiObject") then
+		return
+	end
+	chip.BackgroundColor3 = CarVisualFactory.qualityColor(qualityId)
+	local rimColor = nil
+	if type(qualityId) == "string" and CarConfig.needsLightRim(qualityId) then
+		rimColor = Color3.fromRGB(226, 230, 236)
+	elseif type(qualityId) == "string" and CarConfig.needsDarkInk(qualityId) then
+		rimColor = Color3.fromRGB(42, 32, 18)
+	end
+	if rimColor ~= nil then
+		local rim = Instance.new("UIStroke")
+		rim.Name = "QualityRim"
+		rim.Color = rimColor
+		rim.Thickness = 1.5
+		rim.Parent = chip
+	end
 end
 
 function CarVisualFactory.poseCFrame(pose, rideHeight: number?, lateral: number?)
@@ -67,32 +121,23 @@ local function addPart(props)
 	return item
 end
 
-local function levelTag(parent: BasePart, upgradeLevel: number)
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "LevelTag"
-	billboard.Size = UDim2.fromOffset(64, 22)
-	billboard.StudsOffset = Vector3.new(0, 1.35, 0)
-	billboard.MaxDistance = 90
-	billboard.LightInfluence = 0
-	local label = Instance.new("TextLabel")
-	label.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-	label.BackgroundTransparency = 0.2
-	label.BorderSizePixel = 0
-	label.Font = Enum.Font.GothamBold
-	label.Text = string.format("+%d", upgradeLevel)
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.TextScaled = true
-	label.Size = UDim2.fromScale(1, 1)
-	label.Parent = billboard
-	billboard.Parent = parent
-end
-
--- 車頭朝向 -Z，方便用 CFrame.lookAt 對齊賽道前進方向。
+-- 車頭朝向 -Z，方便用 CFrame.lookAt 對齊賽道前進方向。強化數字只留在介面文字，不浮在車身上。
 function CarVisualFactory.build(spec)
 	spec = spec or {}
 	local qualityId = if type(spec.qualityId) == "string" then spec.qualityId else "Common"
 	local upgradeLevel = if type(spec.upgradeLevel) == "number" then spec.upgradeLevel else 0
-	local bodyColor = CarVisualFactory.qualityColor(qualityId)
+	local record = if type(spec.modelId) == "string" then CarCatalog.getByModelId(spec.modelId) else nil
+	local bodyColor = Color3.fromRGB(120, 122, 126)
+	if record ~= nil and type(record.Paint) == "table" then
+		bodyColor = Color3.fromRGB(record.Paint[1], record.Paint[2], record.Paint[3])
+	end
+	if record ~= nil and type(record.MeshKey) == "string" then
+		local mesh = CarVisualFactory.findMesh(record.MeshKey)
+		if mesh ~= nil then
+			return CarVisualFactory.cloneMesh(mesh, spec, record)
+		end
+		return CarVisualFactory.missingMesh(spec, record)
+	end
 	local dark = Color3.fromRGB(28, 30, 34)
 	local glass = Color3.fromRGB(188, 226, 236)
 	local model = Instance.new("Model")
@@ -224,7 +269,7 @@ function CarVisualFactory.build(spec)
 	if qualityId == "Legendary" then
 		local glow = Instance.new("PointLight")
 		glow.Name = "LegendaryGlow"
-		glow.Color = bodyColor
+		glow.Color = CarVisualFactory.qualityColor(qualityId)
 		glow.Brightness = 1.1
 		glow.Range = 8
 		glow.Shadows = false
@@ -237,15 +282,95 @@ function CarVisualFactory.build(spec)
 		spark.Speed = NumberRange.new(0.4, 1)
 		spark.Size = NumberSequence.new(0.12)
 		spark.LightEmission = 0.35
-		spark.Color = ColorSequence.new(bodyColor)
+		spark.Color = ColorSequence.new(CarVisualFactory.qualityColor(qualityId))
 		spark.Parent = body
 	end
 
-	levelTag(body, upgradeLevel)
 	model:SetAttribute("ModelId", spec.modelId)
 	model:SetAttribute("QualityId", qualityId)
 	model:SetAttribute("UpgradeLevel", upgradeLevel)
 	model:SetAttribute("DisplayName", spec.displayName)
+	return model
+end
+
+function CarVisualFactory.findMesh(meshKey: string): Instance?
+	if game == nil or type(meshKey) ~= "string" then
+		return nil
+	end
+	local folders = {
+		game:GetService("ReplicatedStorage"):FindFirstChild("CarMeshKit"),
+		game:GetService("ServerStorage"):FindFirstChild("CarMeshKit"),
+	}
+	for _, folder in ipairs(folders) do
+		if folder ~= nil then
+			local found = folder:FindFirstChild(meshKey)
+			if found ~= nil then
+				return found
+			end
+		end
+	end
+	return nil
+end
+
+function CarVisualFactory.cloneMesh(source: Instance, spec, record)
+	local model = source:Clone()
+	model.Name = "OfficialCar"
+	if not model:IsA("Model") then
+		local wrapper = Instance.new("Model")
+		wrapper.Name = "OfficialCar"
+		model.Parent = wrapper
+		if model:IsA("BasePart") then
+			wrapper.PrimaryPart = model
+		end
+		model = wrapper
+	end
+	if model.PrimaryPart == nil then
+		local part = model:FindFirstChildWhichIsA("BasePart", true)
+		if part ~= nil then
+			model.PrimaryPart = part
+		end
+	end
+	model:SetAttribute("ModelId", spec.modelId)
+	model:SetAttribute("QualityId", spec.qualityId)
+	model:SetAttribute("UpgradeLevel", spec.upgradeLevel or 0)
+	model:SetAttribute("DisplayName", spec.displayName)
+	model:SetAttribute("MeshKey", record.MeshKey)
+	model:SetAttribute("OfficialMesh", true)
+	return model
+end
+
+function CarVisualFactory.missingMesh(spec, record)
+	local model = Instance.new("Model")
+	model.Name = "MissingCarMesh"
+	local anchor = Instance.new("Part")
+	anchor.Name = "Anchor"
+	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Parent = model
+	model.PrimaryPart = anchor
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "MissingLabel"
+	billboard.Size = UDim2.fromOffset(180, 40)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = anchor
+	local text = Instance.new("TextLabel")
+	text.BackgroundTransparency = 1
+	text.Size = UDim2.fromScale(1, 1)
+	text.Font = Enum.Font.GothamBold
+	text.TextSize = 14
+	text.TextColor3 = Color3.fromRGB(236, 232, 220)
+	text.Text = "Not imported"
+	text.Parent = billboard
+	model:SetAttribute("ModelId", spec.modelId)
+	model:SetAttribute("QualityId", spec.qualityId)
+	model:SetAttribute("UpgradeLevel", spec.upgradeLevel or 0)
+	model:SetAttribute("DisplayName", spec.displayName)
+	model:SetAttribute("MeshKey", record.MeshKey)
+	model:SetAttribute("MissingMesh", true)
 	return model
 end
 

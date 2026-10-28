@@ -28,6 +28,28 @@ local function laneOffset(lane: number): number
 	return 0
 end
 
+-- 跟 PrivateGarage.RaceShift 同一組數字。付費賽車只出現在賽車場，不跟著車庫平移。
+local RACE_SHIFT = Vector3.new(274, 0, -1)
+
+local function withShift(pose)
+	if pose == nil then
+		return pose
+	end
+	return {
+		x = pose.x + RACE_SHIFT.X,
+		y = pose.y + RACE_SHIFT.Y,
+		z = pose.z + RACE_SHIFT.Z,
+		lookX = pose.lookX,
+		lookY = pose.lookY,
+		lookZ = pose.lookZ,
+		upX = pose.upX,
+		upY = pose.upY,
+		upZ = pose.upZ,
+		segment = pose.segment,
+		distance = pose.distance,
+	}
+end
+
 local function visualPose(pose)
 	local official = 0
 	if pose ~= nil and type(pose.distance) == "number" then
@@ -150,6 +172,7 @@ end
 function PlaygroundPresenter.new()
 	local models = {}
 	local lanes = {}
+	local shifts = {}
 	local wheelSets = {}
 	local dusts = {}
 	local trails = {}
@@ -166,6 +189,7 @@ function PlaygroundPresenter.new()
 		local model = models[raceId]
 		models[raceId] = nil
 		lanes[raceId] = nil
+		shifts[raceId] = nil
 		wheelSets[raceId] = nil
 		dusts[raceId] = nil
 		trails[raceId] = nil
@@ -190,9 +214,13 @@ function PlaygroundPresenter.new()
 			model.Name = "ActiveRaceCar"
 			model:SetAttribute("RaceId", raceId)
 			model:SetAttribute("DisplayOnly", true)
+			if type(spec.ownerKey) == "string" then
+				model:SetAttribute("OwnerKey", spec.ownerKey)
+			end
 			model.Parent = parent
 			models[raceId] = model
 			lanes[raceId] = laneOffset(spec.lane or 0)
+			shifts[raceId] = spec.shift
 
 			local wheels = {}
 			local pivot = model:GetPivot()
@@ -211,7 +239,7 @@ function PlaygroundPresenter.new()
 			trails[raceId] = trail
 			if spec.pose ~= nil then
 				local pose, alpha, visualDistance = visualPose(spec.pose)
-				placeCar(model, pose, lanes[raceId], alpha, visualDistance, wheels)
+				placeCar(model, withShift(pose), lanes[raceId], alpha, visualDistance, wheels)
 			end
 		end,
 		onRaceStepped = function(raceId: string, pose)
@@ -220,7 +248,7 @@ function PlaygroundPresenter.new()
 				return
 			end
 			local shown, alpha, visualDistance = visualPose(pose)
-			placeCar(model, shown, lanes[raceId] or 0, alpha, visualDistance, wheelSets[raceId] or {})
+			placeCar(model, withShift(shown), lanes[raceId] or 0, alpha, visualDistance, wheelSets[raceId] or {})
 			local dust = dusts[raceId]
 			if dust ~= nil then
 				dust.Enabled = alpha < 0.045

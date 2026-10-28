@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared")
 local CarConfig = require(sharedFolder:WaitForChild("CarConfig"))
+local PoolConfig = require(sharedFolder:WaitForChild("PoolConfig"))
 local AutoSellConfig = require(sharedFolder:WaitForChild("AutoSellConfig"))
 local CarCatalog = require(sharedFolder:WaitForChild("CarCatalog"))
 local CarVisualFactory = require(sharedFolder:WaitForChild("CarVisualFactory"))
@@ -25,13 +26,7 @@ local CARD_COUNT = 42
 local DURATION = 4.2
 -- 與 PlaySessionService.PullInterval 相同。按鈕上的倒數用這個，不另外加長。
 local PULL_COOLDOWN = 1.5
-local RANK = {
-	Common = 1,
-	Uncommon = 2,
-	Rare = 3,
-	Epic = 4,
-	Legendary = 5,
-}
+local shownPoolId = "T0"
 
 local function corner(parent: Instance, radius: number)
 	local uiCorner = Instance.new("UICorner")
@@ -74,10 +69,33 @@ local function button(parent: Instance, text: string, color: Color3)
 	return item
 end
 
-local function r0Cars()
+local function qualityRank(qualityId: string): number
+	return CarConfig.qualityRank(qualityId) or 1
+end
+
+local function currentPool()
+	return PoolConfig.get(shownPoolId) or PoolConfig.get("T0")
+end
+
+local function representative(qualityId: string, rank: number)
+	local eligible = CarCatalog.getEligible(qualityId, rank)
+	for _, car in ipairs(eligible) do
+		if car.Official == true then
+			return car
+		end
+	end
+	return eligible[1]
+end
+
+local function poolCars()
+	local pool = currentPool()
+	local allowed = {}
+	for _, qualityId in ipairs(pool.Qualities) do
+		allowed[qualityId] = true
+	end
 	local cars = {}
-	for _, car in ipairs(CarCatalog.getAll()) do
-		if car.UnlockRebirth == 0 then
+	for _, car in ipairs(CarCatalog.getOfficial()) do
+		if allowed[car.Quality] == true then
 			table.insert(cars, car)
 		end
 	end
@@ -101,17 +119,18 @@ local function commonEntry()
 end
 
 local function weightedEntry(rng): any
-	local total = CarConfig.sumWeights()
+	local pool = currentPool()
+	local total = PoolConfig.sumWeights(pool.Id) or 1
 	local roll = rng:NextInteger(1, total)
 	local cursor = 0
-	for _, quality in ipairs(CarConfig.getQualities()) do
-		cursor += quality.Weight
+	for _, qualityId in ipairs(pool.Qualities) do
+		cursor += pool.Weights[qualityId]
 		if roll <= cursor then
-			local eligible = CarCatalog.getEligible(quality.Id, 0)
-			if #eligible == 0 then
+			local car = representative(qualityId, pool.MinRank)
+			if car == nil then
 				return commonEntry()
 			end
-			return entryFromCatalog(eligible[rng:NextInteger(1, #eligible)])
+			return entryFromCatalog(car)
 		end
 	end
 	return commonEntry()
@@ -128,11 +147,11 @@ local function buildStrip(result, rng)
 		table.insert(cards, weightedEntry(rng) or winner)
 	end
 	cards[WIN_INDEX] = winner
-	local winnerRank = RANK[winner.qualityId] or 1
+	local winnerRank = qualityRank(winner.qualityId)
 	local fallback = commonEntry() or winner
 	for index = WIN_INDEX - 4, WIN_INDEX + 2 do
 		local card = cards[index]
-		if index ~= WIN_INDEX and card ~= nil and (RANK[card.qualityId] or 1) > winnerRank then
+		if index ~= WIN_INDEX and card ~= nil and qualityRank(card.qualityId) > winnerRank then
 			cards[index] = fallback
 		end
 	end
@@ -224,9 +243,12 @@ local function formatGold(value): string
 	return if negative then "-" .. text else text
 end
 
-local function percentText(weight: number, total: number): string
-	local percent = if total > 0 then (weight / total) * 100 else 0
-	return tostring(math.floor(percent + 0.5))
+local function percentText(rate): string
+	if type(rate) == "table" and type(rate.percentText) == "string" then
+		return rate.percentText
+	end
+	local weight = if type(rate) == "table" then rate.weight else 0
+	return PoolConfig.percentLabel(weight)
 end
 
 function GachaBoard.mount(panel: Frame)
@@ -239,8 +261,10 @@ function GachaBoard.mount(panel: Frame)
 		qualities = {},
 	}
 	local pendingConfirm = false
+	local pendingQualityId = nil
 	local playing = false
 	local locked = false
+	local poolOpen = true
 	local skipEnabled = false
 	local cooldownEndsAt = 0
 	local revealStarted = false
@@ -296,7 +320,7 @@ function GachaBoard.mount(panel: Frame)
 	badge.BackgroundColor3 = METAL_DARK
 	badge.BorderSizePixel = 0
 	badge.Position = UDim2.fromOffset(10, 8)
-	badge.Size = UDim2.fromOffset(36, 20)
+	badge.Size = UDim2.fromOffset(44, 20)
 	badge.ZIndex = 6
 	badge.Parent = reelWrap
 	corner(badge, 4)
@@ -304,7 +328,7 @@ function GachaBoard.mount(panel: Frame)
 	local badgeText = label(badge, 12)
 	badgeText.Font = Enum.Font.GothamBold
 	badgeText.Size = UDim2.fromScale(1, 1)
-	badgeText.Text = "R0"
+	badgeText.Text = "T0"
 	badgeText.TextXAlignment = Enum.TextXAlignment.Center
 	badgeText.ZIndex = 7
 
@@ -483,18 +507,45 @@ function GachaBoard.mount(panel: Frame)
 	ratesCaption.TextXAlignment = Enum.TextXAlignment.Center
 	ratesCaption.TextColor3 = MUTED
 	ratesCaption.ZIndex = 6
-	local rateTotal = CarConfig.sumWeights()
-	for index, quality in ipairs(CarConfig.getQualities()) do
-		local row = label(ratesBox, 14)
-		row.Name = "Rate" .. quality.Id
-		row.Font = Enum.Font.GothamBold
-		row.TextSize = 13
-		row.Position = UDim2.new(0, 12, 0, 24 + (index - 1) * 16)
-		row.Size = UDim2.new(1, -20, 0, 16)
-		row.Text = string.format("%s  %s%%", string.upper(quality.DisplayName), percentText(quality.Weight, rateTotal))
-		row.TextColor3 = CarVisualFactory.qualityColor(quality.Id)
-		row.TextTruncate = Enum.TextTruncate.AtEnd
-		row.ZIndex = 6
+	local rateList = Instance.new("ScrollingFrame")
+	rateList.Name = "RateList"
+	rateList.BackgroundTransparency = 1
+	rateList.BorderSizePixel = 0
+	rateList.Position = UDim2.fromOffset(8, 26)
+	rateList.Size = UDim2.new(1, -16, 1, -32)
+	rateList.CanvasSize = UDim2.fromOffset(0, 0)
+	rateList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	rateList.ScrollBarThickness = 4
+	rateList.ScrollingDirection = Enum.ScrollingDirection.Y
+	rateList.ZIndex = 6
+	rateList.Parent = ratesBox
+	local rateLayout = Instance.new("UIListLayout")
+	rateLayout.Padding = UDim.new(0, 1)
+	rateLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rateLayout.Parent = rateList
+
+	local function rebuildRates(described)
+		for _, child in ipairs(rateList:GetChildren()) do
+			if child:IsA("TextLabel") then
+				child:Destroy()
+			end
+		end
+		local rates = if type(described) == "table" and type(described.rates) == "table" then described.rates else nil
+		if rates == nil then
+			local fallback = PoolConfig.describe(shownPoolId, 0)
+			rates = if fallback ~= nil then fallback.rates else {}
+		end
+		for index, rate in ipairs(rates) do
+			local row = label(rateList, 13)
+			row.Name = "Rate" .. tostring(rate.qualityId)
+			row.Font = Enum.Font.GothamBold
+			row.LayoutOrder = index
+			row.Size = UDim2.new(1, -8, 0, 16)
+			row.Text = string.format("%s  %s%%", string.upper(tostring(rate.displayName)), percentText(rate))
+			CarVisualFactory.applyQualityText(row, rate.qualityId)
+			row.TextTruncate = Enum.TextTruncate.AtEnd
+			row.ZIndex = 6
+		end
 	end
 
 	local center = Instance.new("Frame")
@@ -579,7 +630,8 @@ function GachaBoard.mount(panel: Frame)
 
 	local function selectedList(set: { [string]: boolean }): { string }
 		local list = {}
-		for _, qualityId in ipairs(AutoSellConfig.Order) do
+		local pool = currentPool()
+		for _, qualityId in ipairs(pool.Qualities) do
 			if set[qualityId] == true then
 				table.insert(list, qualityId)
 			end
@@ -593,69 +645,24 @@ function GachaBoard.mount(panel: Frame)
 		end
 	end
 
-	for index, qualityId in ipairs(AutoSellConfig.Order) do
-		local quality = CarConfig.getQuality(qualityId)
-		local color = CarVisualFactory.qualityColor(qualityId)
-		local row = Instance.new("TextButton")
-		row.Name = "SellMode" .. qualityId
-		row.BackgroundTransparency = 1
-		row.BorderSizePixel = 0
-		row.AutoButtonColor = false
-		row.Text = ""
-		row.Position = UDim2.new(0, 8, 0, 50 + (index - 1) * 26)
-		row.Size = UDim2.new(1, -16, 0, 24)
-		row.ZIndex = 6
-		row.Parent = sellBox
-		local mark = Instance.new("Frame")
-		mark.Name = "Mark"
-		mark.Active = false
-		mark.AnchorPoint = Vector2.new(0, 0.5)
-		mark.BackgroundColor3 = color
-		mark.BackgroundTransparency = 1
-		mark.BorderSizePixel = 0
-		mark.Position = UDim2.new(0, 2, 0.5, 0)
-		mark.Size = UDim2.fromOffset(14, 14)
-		mark.ZIndex = 7
-		mark.Parent = row
-		corner(mark, 3)
-		stroke(mark, color, 2)
-		local name = label(row, 14)
-		name.Font = Enum.Font.GothamBold
-		name.Position = UDim2.fromOffset(24, 0)
-		name.Size = UDim2.new(1, -78, 1, 0)
-		name.Text = string.upper(if quality ~= nil then quality.DisplayName else qualityId)
-		name.TextColor3 = color
-		name.ZIndex = 7
-		local choice = label(row, 12)
-		choice.Name = "Choice"
-		choice.AnchorPoint = Vector2.new(1, 0.5)
-		choice.Font = Enum.Font.GothamBold
-		choice.Position = UDim2.new(1, -2, 0.5, 0)
-		choice.Size = UDim2.fromOffset(46, 18)
-		choice.Text = "KEEP"
-		choice.TextColor3 = MUTED
-		choice.TextXAlignment = Enum.TextXAlignment.Right
-		choice.ZIndex = 7
-		marks[qualityId] = mark
-		choices[qualityId] = choice
-		row.MouseButton1Click:Connect(function()
-			if playing or locked or pendingConfirm then
-				return
-			end
-			local set = selectedMap()
-			if qualityId == "Legendary" and set[qualityId] ~= true then
-				pendingConfirm = true
-				confirm.Visible = true
-				return
-			end
-			if set[qualityId] == true then
-				set[qualityId] = nil
-			else
-				set[qualityId] = true
-			end
-			sendAutoSell(set, false)
-		end)
-	end
+	local sellList = Instance.new("ScrollingFrame")
+	sellList.Name = "SellList"
+	sellList.BackgroundTransparency = 1
+	sellList.BorderSizePixel = 0
+	sellList.Position = UDim2.fromOffset(8, 52)
+	sellList.Size = UDim2.new(1, -12, 1, -58)
+	sellList.CanvasSize = UDim2.fromOffset(0, 0)
+	sellList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	sellList.ScrollBarThickness = 4
+	sellList.ScrollingDirection = Enum.ScrollingDirection.Y
+	sellList.ZIndex = 6
+	sellList.Parent = sellBox
+	local sellLayout = Instance.new("UIListLayout")
+	sellLayout.Padding = UDim.new(0, 2)
+	sellLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	sellLayout.Parent = sellList
+
+	local rebuildSell
 
 	confirm = Instance.new("Frame")
 	confirm.Name = "LegendaryConfirm"
@@ -674,11 +681,7 @@ function GachaBoard.mount(panel: Frame)
 	warning.TextYAlignment = Enum.TextYAlignment.Top
 	warning.TextColor3 = GOLD_TEXT
 	warning.ZIndex = 10
-	local legendaryPrice = AutoSellConfig.price(0, "Legendary") or 0
-	warning.Text = string.format(
-		"Legendary pulls sell for %d gold and will not stay in the garage. Other checked tiers stay as they are.",
-		legendaryPrice
-	)
+	warning.Text = "High-tier pulls sell for gold and will not stay in the garage. Other checked tiers stay as they are."
 	local confirmButton = button(confirm, "CONFIRM", Color3.fromRGB(168, 72, 58))
 	confirmButton.Position = UDim2.new(0, 8, 1, -36)
 	confirmButton.Size = UDim2.new(0.5, -12, 0, 28)
@@ -691,6 +694,88 @@ function GachaBoard.mount(panel: Frame)
 	cancelButton.Size = UDim2.new(0.5, -12, 0, 28)
 	cancelButton.TextSize = 13
 	cancelButton.ZIndex = 10
+
+	rebuildSell = function(described)
+		for _, child in ipairs(sellList:GetChildren()) do
+			if child:IsA("GuiObject") then
+				child:Destroy()
+			end
+		end
+		table.clear(marks)
+		table.clear(choices)
+		local qualities = if type(described) == "table" and type(described.qualities) == "table" then described.qualities else currentPool().Qualities
+		for index, qualityId in ipairs(qualities) do
+			local quality = CarConfig.getQuality(qualityId)
+			local color = CarVisualFactory.qualityTextColor(qualityId)
+			local row = Instance.new("TextButton")
+			row.Name = "SellMode" .. qualityId
+			row.BackgroundTransparency = 1
+			row.BorderSizePixel = 0
+			row.AutoButtonColor = false
+			row.Text = ""
+			row.LayoutOrder = index
+			row.Size = UDim2.new(1, -8, 0, 22)
+			row.ZIndex = 6
+			row.Parent = sellList
+			local mark = Instance.new("Frame")
+			mark.Name = "Mark"
+			mark.Active = false
+			mark.AnchorPoint = Vector2.new(0, 0.5)
+			mark.BackgroundColor3 = CarVisualFactory.qualityColor(qualityId)
+			mark.BackgroundTransparency = 1
+			mark.BorderSizePixel = 0
+			mark.Position = UDim2.new(0, 2, 0.5, 0)
+			mark.Size = UDim2.fromOffset(14, 14)
+			mark.ZIndex = 7
+			mark.Parent = row
+			corner(mark, 3)
+			stroke(mark, color, 2)
+			local name = label(row, 13)
+			name.Font = Enum.Font.GothamBold
+			name.Position = UDim2.fromOffset(22, 0)
+			name.Size = UDim2.new(1, -72, 1, 0)
+			name.Text = string.upper(if quality ~= nil then quality.DisplayName else qualityId)
+			CarVisualFactory.applyQualityText(name, qualityId)
+			name.ZIndex = 7
+			local choice = label(row, 12)
+			choice.Name = "Choice"
+			choice.AnchorPoint = Vector2.new(1, 0.5)
+			choice.Font = Enum.Font.GothamBold
+			choice.Position = UDim2.new(1, -2, 0.5, 0)
+			choice.Size = UDim2.fromOffset(46, 18)
+			choice.Text = "KEEP"
+			choice.TextColor3 = MUTED
+			choice.TextXAlignment = Enum.TextXAlignment.Right
+			choice.ZIndex = 7
+			marks[qualityId] = mark
+			choices[qualityId] = choice
+			row.MouseButton1Click:Connect(function()
+				if playing or locked or pendingConfirm or poolOpen ~= true then
+					return
+				end
+				local set = selectedMap()
+				if AutoSellConfig.needsConfirm(qualityId) and set[qualityId] ~= true then
+					pendingQualityId = qualityId
+					pendingConfirm = true
+					local price = AutoSellConfig.price(0, qualityId) or 0
+					local displayName = if quality ~= nil then quality.DisplayName else qualityId
+					warning.Text = string.format(
+						"%s pulls sell for %d gold and will not stay in the garage. Other checked tiers stay as they are.",
+						displayName,
+						price
+					)
+					confirm.Visible = true
+					return
+				end
+				if set[qualityId] == true then
+					set[qualityId] = nil
+				else
+					set[qualityId] = true
+				end
+				sendAutoSell(set, false)
+			end)
+		end
+	end
 
 	local overlay = Instance.new("Frame")
 	overlay.Name = "CollectionPage"
@@ -762,7 +847,7 @@ function GachaBoard.mount(panel: Frame)
 
 	local function showCatalog()
 		clearOverlay()
-		local cars = r0Cars()
+		local cars = poolCars()
 		local known = discoveredSet()
 		local foundCount = 0
 		for _, car in ipairs(cars) do
@@ -787,7 +872,7 @@ function GachaBoard.mount(panel: Frame)
 			row.ZIndex = 11
 			row.Parent = overlayBody
 			corner(row, 6)
-			stroke(row, if knownCar then CarVisualFactory.qualityColor(car.Quality) else Color3.fromRGB(40, 40, 44), 2)
+			stroke(row, if knownCar then CarVisualFactory.qualityTextColor(car.Quality) else Color3.fromRGB(40, 40, 44), 2)
 			local preview = Instance.new("ViewportFrame")
 			preview.BackgroundColor3 = Color3.fromRGB(20, 22, 26)
 			preview.BorderSizePixel = 0
@@ -897,7 +982,7 @@ function GachaBoard.mount(panel: Frame)
 	local function makeCard(card, index: number)
 		local quality = CarConfig.getQuality(card.qualityId)
 		local qualityName = if quality ~= nil then quality.DisplayName else tostring(card.qualityId)
-		local color = CarVisualFactory.qualityColor(card.qualityId)
+		local color = CarVisualFactory.qualityTextColor(card.qualityId)
 		local clipH = math.max(localSize(clip).Y, cardH)
 		local y = math.max(0, math.floor((clipH - cardH) * 0.5))
 		local item = Instance.new("Frame")
@@ -933,7 +1018,7 @@ function GachaBoard.mount(panel: Frame)
 		name.Position = UDim2.new(0, 6, 1, -26)
 		name.Size = UDim2.new(1, -12, 0, 20)
 		name.Text = string.upper(qualityName)
-		name.TextColor3 = color
+		CarVisualFactory.applyQualityText(name, card.qualityId)
 		name.TextXAlignment = Enum.TextXAlignment.Center
 		name.TextTruncate = Enum.TextTruncate.AtEnd
 		name.ZIndex = 6
@@ -959,10 +1044,11 @@ function GachaBoard.mount(panel: Frame)
 			return
 		end
 		local cards = {}
-		for _, quality in ipairs(CarConfig.getQualities()) do
-			local eligible = CarCatalog.getEligible(quality.Id, 0)
-			if #eligible > 0 then
-				table.insert(cards, entryFromCatalog(eligible[1]))
+		local pool = currentPool()
+		for _, qualityId in ipairs(pool.Qualities) do
+			local car = representative(qualityId, pool.MinRank)
+			if car ~= nil then
+				table.insert(cards, entryFromCatalog(car))
 			end
 		end
 		if #cards == 0 then
@@ -983,8 +1069,8 @@ function GachaBoard.mount(panel: Frame)
 		else
 			resultLabel.Text = string.format("%s\n%s", headline, status)
 		end
-		local color = CarVisualFactory.qualityColor(result.qualityId)
-		resultLabel.TextColor3 = color
+		local color = CarVisualFactory.qualityTextColor(result.qualityId)
+		CarVisualFactory.applyQualityText(resultLabel, result.qualityId)
 		resultStroke.Color = color
 		resultBar.BackgroundTransparency = 0
 		resultBar.Visible = true
@@ -1130,11 +1216,17 @@ function GachaBoard.mount(panel: Frame)
 	local function refreshPullButton()
 		local left = cooldownLeft()
 		local cooling = left > 0.05
-		local active = not locked and not playing and not cooling
+		local active = poolOpen and not locked and not playing and not cooling
 		pullButton.Active = active
 		pullButton.AutoButtonColor = active
 		pullButton.BackgroundTransparency = if active then 0 else 0.35
-		pullButton.Text = if cooling then string.format("%.1fs", left) else "ROLL ×1"
+		if not poolOpen then
+			pullButton.Text = "LOCKED"
+		elseif cooling then
+			pullButton.Text = string.format("%.1fs", left)
+		else
+			pullButton.Text = "ROLL ×1"
+		end
 	end
 
 	function board.isBusy(): boolean
@@ -1151,7 +1243,38 @@ function GachaBoard.mount(panel: Frame)
 		refreshPullButton()
 	end
 
+	function board.poolId(): string
+		return shownPoolId
+	end
+
 	function board.update(state)
+		local described = if state ~= nil and type(state.pool) == "table" then state.pool else nil
+		if described ~= nil and type(described.id) == "string" and PoolConfig.get(described.id) ~= nil then
+			local changed = described.id ~= shownPoolId
+			shownPoolId = described.id
+			poolOpen = described.unlocked == true
+			if changed or rateList:FindFirstChildWhichIsA("TextLabel") == nil then
+				rebuildRates(described)
+				if rebuildSell ~= nil then
+					rebuildSell(described)
+				end
+				pendingConfirm = false
+				pendingQualityId = nil
+			end
+			local accent = described.accent
+			if type(accent) == "table" then
+				pullButton.BackgroundColor3 = Color3.fromRGB(accent[1], accent[2], accent[3])
+			end
+			costLabel.Text = string.format("COST: %s GOLD", tostring(described.price or 0))
+			local title = panel:FindFirstChild("Title")
+			if title ~= nil and title:IsA("TextLabel") and type(described.dealerName) == "string" then
+				title.Text = string.upper(described.dealerName)
+			end
+			local note = if described.oddsStatus == "test" then "TEST ODDS" else "DROP RATES"
+			ratesCaption.Text = note
+		end
+		local rankId = if state ~= nil and type(state.rankId) == "string" then state.rankId else "T0"
+		badgeText.Text = rankId
 		local balance = if state ~= nil then state.balance else nil
 		goldValue.Text = if balance == nil then "—" else formatGold(balance)
 		local ids = if state ~= nil and type(state.discovered) == "table" then state.discovered else {}
@@ -1173,8 +1296,9 @@ function GachaBoard.mount(panel: Frame)
 		if state ~= nil and type(state.autoSell) == "table" then
 			autoSellState = state.autoSell
 		end
-		if pendingConfirm and selectedMap().Legendary == true then
+		if pendingConfirm and type(pendingQualityId) == "string" and selectedMap()[pendingQualityId] == true then
 			pendingConfirm = false
+			pendingQualityId = nil
 		end
 		paintAutoSell()
 		board.setLocked(locked)
@@ -1265,8 +1389,11 @@ function GachaBoard.mount(panel: Frame)
 	end)
 	confirmButton.MouseButton1Click:Connect(function()
 		local set = selectedMap()
-		set.Legendary = true
+		if type(pendingQualityId) == "string" then
+			set[pendingQualityId] = true
+		end
 		pendingConfirm = false
+		pendingQualityId = nil
 		confirm.Visible = false
 		sendAutoSell(set, true)
 	end)
@@ -1285,6 +1412,10 @@ function GachaBoard.mount(panel: Frame)
 		showIdle()
 	end)
 
+	rebuildRates(nil)
+	if rebuildSell ~= nil then
+		rebuildSell(nil)
+	end
 	board.update(nil)
 	task.defer(showIdle)
 	return board

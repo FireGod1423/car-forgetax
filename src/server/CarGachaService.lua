@@ -9,6 +9,7 @@ end
 
 local CarConfig = importShared("CarConfig")
 local CarCatalog = importShared("CarCatalog")
+local PoolConfig = importShared("PoolConfig")
 local RandomSource = importShared("RandomSource")
 
 local CarGachaService = {}
@@ -20,6 +21,8 @@ CarGachaService.Reason = table.freeze({
 	InvalidRebirth = "InvalidRebirth",
 	InvalidPlayer = "InvalidPlayer",
 	InvalidPrice = "InvalidPrice",
+	InvalidPool = "InvalidPool",
+	PoolLocked = "PoolLocked",
 	RequestInProgress = "RequestInProgress",
 	GrantFailed = "GrantFailed",
 	InternalError = "InternalError",
@@ -65,7 +68,7 @@ function CarGachaService.new(options)
 		return tostring(playerKey) .. "\0" .. requestId
 	end
 
-	function service:Pull(playerKey, rebirthLevel, requestId)
+	function service:Pull(playerKey, rebirthLevel, requestId, poolId)
 		if not isPlayerKey(playerKey) then
 			return {
 				ok = false,
@@ -92,6 +95,16 @@ function CarGachaService.new(options)
 			}
 		end
 
+		local resolvedPool = if type(poolId) == "string" and poolId ~= "" then poolId else "T0"
+		if PoolConfig.get(resolvedPool) == nil then
+			return {
+				ok = false,
+				reason = CarGachaService.Reason.InvalidPool,
+				requestId = requestId,
+				charged = false,
+			}
+		end
+
 		local key = cacheKey(playerKey, requestId)
 		local previous = cached[key]
 		if previous ~= nil then
@@ -110,7 +123,7 @@ function CarGachaService.new(options)
 
 		pending[key] = true
 		local debited = false
-		local price = config.SinglePullPrice
+		local price = PoolConfig.price(resolvedPool)
 
 		local function refund()
 			if debited then
@@ -143,8 +156,20 @@ function CarGachaService.new(options)
 				}
 			end
 
+			if not PoolConfig.unlocked(resolvedPool, rebirthLevel) then
+				return {
+					ok = false,
+					reason = CarGachaService.Reason.PoolLocked,
+					requestId = requestId,
+					poolId = resolvedPool,
+					price = price,
+					balance = wallet:GetBalance(playerKey),
+					charged = false,
+				}
+			end
+
 			-- 先定品質。這個品質沒有可發的車時，不改抽其他品質，也不扣錢。
-			local qualityId, rollReason = config.rollQuality(rng)
+			local qualityId, rollReason = PoolConfig.roll(resolvedPool, rng)
 			if qualityId == nil then
 				error(rollReason or "RollFailed")
 			end

@@ -1,0 +1,561 @@
+{
+  "source_tris": 1953042,
+  "variants": [
+    {
+      "tag": "version_a",
+      "body_tris": 7197,
+      "wheels": {
+        "Wheel_FL": 1949,
+        "Wheel_FR": 1948,
+        "Wheel_RL": 1950,
+        "Wheel_RR": 1949
+      },
+      "materials": [
+        {
+          "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+          "images": [
+            {
+              "name": "red_hatchback_3d_model_basecolor.jpg",
+              "size": [
+                4096,
+                4096
+              ]
+            },
+            {
+              "name": "red_hatchback_3d_model_rm.jpg",
+              "size": [
+                4096,
+                4096
+              ]
+            },
+            {
+              "name": "red_hatchback_3d_model_normal.png",
+              "size": [
+                4096,
+                4096
+              ]
+            }
+          ],
+          "Roughness": "linked",
+          "Metallic": "linked",
+          "Specular IOR Level": 0.5,
+          "Alpha": 1.0,
+          "Emission Strength": 0.0,
+          "Transmission Weight": 0.0
+        }
+      ],
+      "total_tris": 14993,
+      "size": [
+        1.394,
+        2.65,
+        1.009
+      ],
+      "ground": 0.0
+    },
+    {
+      "tag": "version_b",
+      "body_tris": 4398,
+      "wheels": {
+        "Wheel_FL": 1399,
+        "Wheel_FR": 1399,
+        "Wheel_RL": 1400,
+        "Wheel_RR": 1399
+      },
+      "materials": [
+        {
+          "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+          "images": [
+            {
+              "name": "red_hatchback_3d_model_basecolor.jpg",
+              "size": [
+                4096,
+                4096
+              ]
+            },
+            {
+              "name": "red_hatchback_3d_model_rm.jpg",
+              "size": [
+                4096,
+                4096
+              ]
+            },
+            {
+              "name": "red_hatchback_3d_model_normal.png",
+              "size": [
+                4096,
+                4096
+              ]
+            }
+          ],
+          "Roughness": "linked",
+          "Metallic": "linked",
+          "Specular IOR Level": 0.5,
+          "Alpha": 1.0,
+          "Emission Strength": 0.0,
+          "Transmission Weight": 0.0
+        }
+      ],
+      "total_tris": 9995,
+      "size": [
+        1.396,
+        2.65,
+        1.009
+      ],
+      "ground": 0.0
+    }
+  ],
+  "reimport": [
+    {
+      "file": "C:\\Users\\User\\OneDrive\\\u684c\u9762\\Documents\\CarForgeTax\\blender\\exports\\Tripo\\optimized_hatchback\\version_a\\version_a.glb",
+      "objects": [
+        {
+          "name": "Body",
+          "tris": 7197,
+          "location": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_FL",
+          "tris": 1949,
+          "location": [
+            -0.48,
+            -0.794,
+            0.234
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_FR",
+          "tris": 1948,
+          "location": [
+            0.482,
+            -0.781,
+            0.221
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_RL",
+          "tris": 1950,
+          "location": [
+            -0.479,
+            0.895,
+            0.222
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_RR",
+          "tris": 1949,
+          "location": [
+            0.482,
+            0.917,
+            0.234
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        }
+      ],
+      "size": [
+        1.394,
+        2.65,
+        1.009
+      ],
+      "ground": 0.0
+    },
+    {
+      "file": "C:\\Users\\User\\OneDrive\\\u684c\u9762\\Documents\\CarForgeTax\\blender\\exports\\Tripo\\optimized_hatchback\\version_b\\version_b.glb",
+      "objects": [
+        {
+          "name": "Body",
+          "tris": 4398,
+          "location": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_FL",
+          "tris": 1399,
+          "location": [
+            -0.482,
+            -0.794,
+            0.234
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_FR",
+          "tris": 1399,
+          "location": [
+            0.482,
+            -0.78,
+            0.221
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_RL",
+          "tris": 1400,
+          "location": [
+            -0.479,
+            0.895,
+            0.223
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        },
+        {
+          "name": "Wheel_RR",
+          "tris": 1399,
+          "location": [
+            0.482,
+            0.917,
+            0.234
+          ],
+          "materials": [
+            {
+              "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+              "images": [
+                {
+                  "name": "red_hatchback_3d_model_basecolor",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_rm",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                },
+                {
+                  "name": "red_hatchback_3d_model_normal",
+                  "size": [
+                    4096,
+                    4096
+                  ]
+                }
+              ],
+              "Roughness": "linked",
+              "Metallic": "linked",
+              "Specular IOR Level": 0.5,
+              "Alpha": 1.0,
+              "Emission Strength": 0.0,
+              "Transmission Weight": 0.0
+            }
+          ]
+        }
+      ],
+      "size": [
+        1.396,
+        2.65,
+        1.009
+      ],
+      "ground": 0.0
+    }
+  ]
+}

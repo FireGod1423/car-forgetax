@@ -234,7 +234,7 @@ function CarUpgradeService.new(options)
 				})
 			end
 
-			-- 目前沒有重生系統，性能先用這台車取得時的重生階級。
+			-- AcquiredRebirth 只驗證這台車的紀錄。T 等級不加進 Power。
 			local power, powerReason = CarConfig.calculatePower(nextLevel, model.Quality, car.AcquiredRebirth)
 			if power == nil then
 				return fail(requestId, powerReason or CarUpgradeService.Reason.UpdateFailed, {

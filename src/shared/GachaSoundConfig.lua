@@ -28,7 +28,7 @@ local CLUNK = "rbxassetid://9125665716" -- Metal Clunk Moviola Device
 local CARTOON = "rbxassetid://1844278029" -- Cartoon Time 3 (b) Link 2，APM Music
 local HIT = "rbxassetid://9043151109" -- Get Up And Go - Hit，APM Music
 
-GachaSoundConfig.reveal = table.freeze({
+local reveal = {
 	Common = table.freeze({
 		cue(CHIME_A, 0.24, 1, 0.65),
 	}),
@@ -47,7 +47,24 @@ GachaSoundConfig.reveal = table.freeze({
 		cue(METAL, 0.36, 0.68, 1.05),
 		cue(CLUNK, 0.24, 0.9, 0.75),
 	}),
-})
+}
+
+-- 更高品質先沿用已確認的音效，不新增未驗證的 SoundId。
+for _, qualityId in ipairs({
+	"Mythic",
+	"Divine",
+	"Celestial",
+	"Transcendent",
+	"Eternal",
+	"Immortal",
+	"Astral",
+	"Cosmic",
+	"Primordial",
+	"Singularity",
+}) do
+	reveal[qualityId] = reveal.Legendary
+end
+GachaSoundConfig.reveal = table.freeze(reveal)
 
 -- 完整音檔 13.86 秒。只播開頭 2.6 秒，這段在 Studio 量到持續有聲。
 GachaSoundConfig.legendaryMelody = table.freeze({
@@ -64,6 +81,16 @@ GachaSoundConfig.revealGap = table.freeze({
 	Rare = 0,
 	Epic = 0.12,
 	Legendary = 0.38,
+	Mythic = 0.38,
+	Divine = 0.38,
+	Celestial = 0.38,
+	Transcendent = 0.38,
+	Eternal = 0.38,
+	Immortal = 0.38,
+	Astral = 0.38,
+	Cosmic = 0.38,
+	Primordial = 0.38,
+	Singularity = 0.38,
 })
 
 return GachaSoundConfig

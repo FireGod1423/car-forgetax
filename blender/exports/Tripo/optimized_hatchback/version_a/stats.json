@@ -1,0 +1,51 @@
+{
+  "tag": "version_a",
+  "body_tris": 7197,
+  "wheels": {
+    "Wheel_FL": 1949,
+    "Wheel_FR": 1948,
+    "Wheel_RL": 1950,
+    "Wheel_RR": 1949
+  },
+  "materials": [
+    {
+      "name": "tripo_material_a2a0b4e4-7dba-4897-9373-14bdc9ffdee7",
+      "images": [
+        {
+          "name": "red_hatchback_3d_model_basecolor.jpg",
+          "size": [
+            4096,
+            4096
+          ]
+        },
+        {
+          "name": "red_hatchback_3d_model_rm.jpg",
+          "size": [
+            4096,
+            4096
+          ]
+        },
+        {
+          "name": "red_hatchback_3d_model_normal.png",
+          "size": [
+            4096,
+            4096
+          ]
+        }
+      ],
+      "Roughness": "linked",
+      "Metallic": "linked",
+      "Specular IOR Level": 0.5,
+      "Alpha": 1.0,
+      "Emission Strength": 0.0,
+      "Transmission Weight": 0.0
+    }
+  ],
+  "total_tris": 14993,
+  "size": [
+    1.394,
+    2.65,
+    1.009
+  ],
+  "ground": 0.0
+}

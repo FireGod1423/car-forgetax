@@ -452,10 +452,11 @@ local function testPower()
 	assertTrue(result.ok, "性能測試強化失敗")
 	assertEqual(result.upgradeLevel, 4, "性能測試等級")
 	local expected = CarConfig.calculatePower(4, "Common", 2)
-	assertEqual(expected, 167, "既有公式的對照值")
+	assertEqual(expected, 140, "同品質同強化的對照值")
 	assertEqual(result.power, expected, "強化後性能")
-	assertEqual(result.power, 100 + (10 * 4) + 0 + 27, "性能拆解")
-	return "+4、R2、普通車性能為 167"
+	assertEqual(result.power, 100 + (10 * 4), "性能拆解")
+	assertEqual(CarConfig.calculatePower(4, "Common", 0), result.power, "T 等級加進了強化後的 Power")
+	return "+4 普通車性能為 140，與取得時的 T 等級無關"
 end
 
 local function testClientCannotChooseOutcome()

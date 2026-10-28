@@ -2,6 +2,7 @@
 -- 預覽用的是 ViewportFrame 自己的相機，不會改玩家鏡頭。
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared")
 local UpgradeConfig = require(sharedFolder:WaitForChild("UpgradeConfig"))
@@ -22,11 +23,27 @@ local MINT = Color3.fromRGB(96, 220, 150)
 local CLOUD = Color3.fromRGB(210, 214, 220)
 
 local FLASH = {
-	Success = Color3.fromRGB(72, 220, 120),
-	GreatSuccess = Color3.fromRGB(255, 214, 70),
-	Keep = Color3.fromRGB(168, 172, 178),
-	Damage = Color3.fromRGB(255, 150, 48),
-	Destroy = Color3.fromRGB(255, 72, 64),
+	Success = Color3.fromRGB(64, 148, 255),
+	GreatSuccess = Color3.fromRGB(186, 96, 255),
+	Keep = Color3.fromRGB(88, 214, 120),
+	Damage = Color3.fromRGB(242, 140, 42),
+	Destroy = Color3.fromRGB(226, 58, 52),
+}
+
+local BAR_NAME = {
+	Destroy = "DESTROY",
+	Damage = "DAMAGE",
+	Keep = "KEEP",
+	Success = "SUCCESS",
+	GreatSuccess = "GREAT",
+}
+
+local BANNER = {
+	Destroy = "DESTROYED",
+	Damage = "DAMAGED",
+	Keep = "UNCHANGED",
+	Success = "SUCCESS",
+	GreatSuccess = "GREAT SUCCESS",
 }
 
 local function corner(parent: Instance, radius: number)
@@ -68,24 +85,6 @@ local function label(parent: Instance, textSize: number)
 	return item
 end
 
-local function oddsText(upgradeLevel: number): string
-	if upgradeLevel >= CarConfig.MaxUpgradeLevel then
-		return "Already +10. It cannot be upgraded again."
-	end
-	local weights, reason = UpgradeConfig.getWeights(upgradeLevel)
-	local total = UpgradeConfig.sumWeights(upgradeLevel)
-	if weights == nil or total == nil or total <= 0 then
-		return "Could not read the odds: " .. tostring(reason)
-	end
-	local lines = {}
-	for _, outcome in ipairs(UpgradeConfig.getOutcomes()) do
-		local weight = weights[outcome.Id] or 0
-		local percent = weight / total * 100
-		table.insert(lines, string.format("%s %.0f%%", outcome.DisplayName, percent))
-	end
-	return table.concat(lines, "　")
-end
-
 local function carLine(entry): string
 	return string.format(
 		"%s  %s  +%d  Power %s",
@@ -108,6 +107,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	local state = nil
 	local selectedId = nil
 	local upgradeId = nil
+	local testId = nil
 	local upgradeNotice = nil
 	local upgradePending = false
 	local currentPage = nil
@@ -126,7 +126,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 
 	local INTRO_LINES = {
 		"New around here? Quit staring. I used to run these tracks too.",
-		"You're still R0. That means you haven't been reborn. Every driver starts here.",
+		"You're still T0. That means you haven't been reborn. Every driver starts here.",
 		"Push past your limit, and you can attempt a rebirth into a higher rank.",
 		"Higher ranks get you better dealers and better cars. That's not your problem yet.",
 		"All I've got is scrap, and a few toy cars that might not even run.",
@@ -158,7 +158,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	introTitle.Name = "SpeakerTitle"
 	introTitle.Position = UDim2.fromOffset(18, 38)
 	introTitle.Size = UDim2.new(1, -150, 0, 18)
-	introTitle.Text = "R0 · Wandering Dealer"
+	introTitle.Text = "T0 · Wandering Dealer"
 	introTitle.TextColor3 = Color3.fromRGB(232, 214, 186)
 	introTitle.ZIndex = 21
 	local introBody = label(intro, 18)
@@ -211,8 +211,14 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	hud.BackgroundTransparency = 0.15
 	hud.TextXAlignment = Enum.TextXAlignment.Center
 	hud.TextYAlignment = Enum.TextYAlignment.Center
-	hud.Text = "Loading garage…"
+	hud.Text = ""
+	hud.Visible = false
 	corner(hud, 8)
+
+	local rankButton = button(gui, "Rank Up", GOLD, UDim2.fromOffset(96, 32))
+	rankButton.Name = "RankUpButton"
+	rankButton.Position = UDim2.fromOffset(12, 88)
+	rankButton.ZIndex = 8
 
 	local raceStatusOpen = false
 	local raceStatus = Instance.new("Frame")
@@ -382,13 +388,161 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	local gachaBoard = GachaBoard.mount(gachaPanel)
 
 	local upgradePanel, upgradeClose = shell("UpgradePanel", "Upgrade")
-	local upgradeList = makeList(upgradePanel, "CarList")
-	local upgradeDetail = label(upgradePanel, 16)
-	upgradeDetail.Name = "Detail"
-	upgradeDetail.ZIndex = 4
-	local upgradeButton = button(upgradePanel, "Upgrade", GOLD, UDim2.fromOffset(180, 44))
+	upgradePanel.BackgroundTransparency = 1
+	upgradePanel.Active = false
+	local upgradeTitle = upgradePanel:FindFirstChild("Title")
+	if upgradeTitle ~= nil and upgradeTitle:IsA("GuiObject") then
+		upgradeTitle.Visible = false
+	end
+	upgradeClose.Text = "EXIT"
+	upgradeClose.Size = UDim2.new(1, -16, 0, 32)
+	upgradeClose.AnchorPoint = Vector2.new(0, 0)
+	upgradeClose.Position = UDim2.fromOffset(8, 8)
+	local leftCard = Instance.new("Frame")
+	leftCard.Name = "GarageCard"
+	leftCard.BackgroundColor3 = INK
+	leftCard.BackgroundTransparency = 0.08
+	leftCard.BorderSizePixel = 0
+	leftCard.Active = true
+	leftCard.ZIndex = 5
+	leftCard.Parent = upgradePanel
+	corner(leftCard, 12)
+	local leftTitle = label(leftCard, 18)
+	leftTitle.Name = "Heading"
+	leftTitle.Font = Enum.Font.GothamBold
+	leftTitle.Position = UDim2.fromOffset(12, 46)
+	leftTitle.Size = UDim2.new(1, -24, 0, 24)
+	leftTitle.Text = "GARAGE"
+	leftTitle.ZIndex = 6
+	upgradeClose.Parent = leftCard
+	local upgradeList = makeList(leftCard, "CarList")
+	local rightCard = Instance.new("Frame")
+	rightCard.Name = "StatsCard"
+	rightCard.BackgroundColor3 = INK
+	rightCard.BackgroundTransparency = 0.08
+	rightCard.BorderSizePixel = 0
+	rightCard.Active = true
+	rightCard.ZIndex = 5
+	rightCard.Parent = upgradePanel
+	corner(rightCard, 12)
+	local rightTitle = label(rightCard, 18)
+	rightTitle.Name = "Heading"
+	rightTitle.Font = Enum.Font.GothamBold
+	rightTitle.Position = UDim2.new(0.08, 0, 0.03, 0)
+	rightTitle.Size = UDim2.new(0.84, 0, 0.07, 0)
+	rightTitle.Text = "CAR STATS"
+	rightTitle.ZIndex = 6
+	local function statLine(name: string, caption: string, y: number)
+		local captionLabel = label(rightCard, 13)
+		captionLabel.Name = name .. "Caption"
+		captionLabel.Position = UDim2.fromScale(0.08, y)
+		captionLabel.Size = UDim2.fromScale(0.84, 0.045)
+		captionLabel.Text = caption
+		captionLabel.TextColor3 = CLOUD
+		captionLabel.ZIndex = 6
+		local value = label(rightCard, 18)
+		value.Name = name
+		value.Font = Enum.Font.GothamBold
+		value.Position = UDim2.fromScale(0.08, y + 0.04)
+		value.Size = UDim2.fromScale(0.84, 0.07)
+		value.Text = "—"
+		value.ZIndex = 6
+		return value
+	end
+	local statName = statLine("CarName", "CAR NAME", 0.12)
+	local statRarity = statLine("Rarity", "RARITY", 0.26)
+	local statLevel = statLine("Level", "UPGRADE LEVEL", 0.4)
+	local statPower = statLine("Power", "POWER", 0.54)
+	local statStatus = statLine("Status", "STATUS", 0.68)
+	local itemsCard = Instance.new("Frame")
+	itemsCard.Name = "ItemsCard"
+	itemsCard.BackgroundColor3 = INK
+	itemsCard.BackgroundTransparency = 0.28
+	itemsCard.BorderSizePixel = 0
+	itemsCard.Active = false
+	itemsCard.ZIndex = 5
+	itemsCard.Parent = upgradePanel
+	corner(itemsCard, 10)
+	local itemsLabel = label(itemsCard, 14)
+	itemsLabel.Font = Enum.Font.GothamBold
+	itemsLabel.Position = UDim2.fromScale(0.08, 0.18)
+	itemsLabel.Size = UDim2.fromScale(0.84, 0.32)
+	itemsLabel.Text = "ITEMS"
+	itemsLabel.TextXAlignment = Enum.TextXAlignment.Left
+	itemsLabel.ZIndex = 6
+	local itemsHint = label(itemsCard, 12)
+	itemsHint.Position = UDim2.fromScale(0.08, 0.52)
+	itemsHint.Size = UDim2.fromScale(0.84, 0.3)
+	itemsHint.Text = "Reserved"
+	itemsHint.TextColor3 = CLOUD
+	itemsHint.ZIndex = 6
+	local oddsHost = Instance.new("Frame")
+	oddsHost.Name = "Odds"
+	oddsHost.BackgroundTransparency = 1
+	oddsHost.BorderSizePixel = 0
+	oddsHost.Active = false
+	oddsHost.ZIndex = 5
+	oddsHost.Parent = upgradePanel
+	local oddsCaption = label(oddsHost, 13)
+	oddsCaption.Name = "Caption"
+	oddsCaption.Size = UDim2.new(1, 0, 0.28, 0)
+	oddsCaption.Text = "Select a car"
+	oddsCaption.TextXAlignment = Enum.TextXAlignment.Center
+	oddsCaption.ZIndex = 6
+	local oddsLabels = Instance.new("Frame")
+	oddsLabels.Name = "Labels"
+	oddsLabels.BackgroundTransparency = 1
+	oddsLabels.Position = UDim2.new(0, 0, 0.3, 0)
+	oddsLabels.Size = UDim2.new(1, 0, 0.28, 0)
+	oddsLabels.ZIndex = 6
+	oddsLabels.Parent = oddsHost
+	local oddsBar = Instance.new("Frame")
+	oddsBar.Name = "Bar"
+	oddsBar.BackgroundColor3 = INK_SOFT
+	oddsBar.BorderSizePixel = 0
+	oddsBar.Position = UDim2.new(0, 0, 0.64, 0)
+	oddsBar.Size = UDim2.new(1, 0, 0.36, 0)
+	oddsBar.ClipsDescendants = true
+	oddsBar.ZIndex = 6
+	oddsBar.Parent = oddsHost
+	corner(oddsBar, 6)
+	local oddsSegments = {}
+	for _, outcome in ipairs(UpgradeConfig.getOutcomes()) do
+		local chip = label(oddsLabels, 12)
+		chip.Name = outcome.Id
+		chip.Font = Enum.Font.GothamBold
+		chip.TextColor3 = FLASH[outcome.Id]
+		chip.TextXAlignment = Enum.TextXAlignment.Center
+		chip.TextYAlignment = Enum.TextYAlignment.Center
+		chip.TextScaled = true
+		chip.ZIndex = 6
+		local segment = Instance.new("Frame")
+		segment.Name = outcome.Id
+		segment.BackgroundColor3 = FLASH[outcome.Id]
+		segment.BorderSizePixel = 0
+		segment.ZIndex = 6
+		segment.Parent = oddsBar
+		oddsSegments[outcome.Id] = {
+			chip = chip,
+			segment = segment,
+		}
+	end
+	local upgradeButton = button(upgradePanel, "UPGRADE", GOLD, UDim2.fromScale(0.36, 0.075))
 	upgradeButton.Name = "UpgradeButton"
-	upgradeButton.ZIndex = 5
+	upgradeButton.ZIndex = 6
+	local resultBanner = label(upgradePanel, 28)
+	resultBanner.Name = "ResultBanner"
+	resultBanner.AnchorPoint = Vector2.new(0.5, 0.5)
+	resultBanner.Position = UDim2.fromScale(0.5, 0.42)
+	resultBanner.Size = UDim2.fromScale(0.28, 0.08)
+	resultBanner.Font = Enum.Font.GothamBold
+	resultBanner.TextXAlignment = Enum.TextXAlignment.Center
+	resultBanner.TextYAlignment = Enum.TextYAlignment.Center
+	resultBanner.BackgroundColor3 = INK
+	resultBanner.BackgroundTransparency = 0.15
+	resultBanner.Visible = false
+	resultBanner.ZIndex = 8
+	corner(resultBanner, 8)
 
 	local racePanel, raceClose = shell("RacePanel", "Race")
 	local raceList = makeList(racePanel, "CarList")
@@ -402,11 +556,30 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	stopButton.Name = "StopAutoButton"
 	stopButton.ZIndex = 5
 
+	local fusionPanel, fusionClose = shell("FusionPanel", "Car Fusion")
+	local fusionBody = label(fusionPanel, 16)
+	fusionBody.Name = "Detail"
+	fusionBody.Text = "Quality fusion is not open yet.\nThis is only the workshop entrance."
+	fusionBody.TextXAlignment = Enum.TextXAlignment.Left
+	fusionBody.TextYAlignment = Enum.TextYAlignment.Top
+	fusionBody.ZIndex = 4
+
+	local testPanel, testClose = shell("TestPanel", "Test Lap")
+	local testList = makeList(testPanel, "CarList")
+	local testDetail = label(testPanel, 16)
+	testDetail.Name = "Detail"
+	testDetail.ZIndex = 4
+	local testButton = button(testPanel, "Place Car", GOLD, UDim2.fromOffset(180, 44))
+	testButton.Name = "PlaceCarButton"
+	testButton.ZIndex = 5
+
 	local panels = {
 		garage = garagePanel,
 		gacha = gachaPanel,
 		upgrade = upgradePanel,
 		race = racePanel,
+		fusion = fusionPanel,
+		test = testPanel,
 	}
 
 	local flash = Instance.new("Frame")
@@ -492,11 +665,11 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			local chip = Instance.new("Frame")
 			chip.Position = UDim2.fromOffset(8, 12)
 			chip.Size = UDim2.fromOffset(8, 28)
-			chip.BackgroundColor3 = CarVisualFactory.qualityColor(entry.qualityId)
 			chip.BorderSizePixel = 0
 			chip.Active = false
 			chip.ZIndex = 5
 			chip.Parent = row
+			CarVisualFactory.markChip(chip, entry.qualityId)
 			corner(chip, 3)
 			row.MouseButton1Click:Connect(function()
 				onPick(entry.instanceId)
@@ -620,6 +793,10 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 				panel.AnchorPoint = Vector2.new(0.5, 0.5)
 				panel.Position = UDim2.new(0.5, 0, 0.5, 0)
 				panel.Size = UDim2.fromOffset(designW, designH)
+			elseif panel == upgradePanel then
+				panel.AnchorPoint = Vector2.new(0, 0)
+				panel.Position = UDim2.fromScale(0, 0)
+				panel.Size = UDim2.fromScale(1, 1)
 			else
 				panel.AnchorPoint = Vector2.new(0, 0)
 				panel.Position = panelPosition
@@ -634,12 +811,19 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		garageDetail.Size = UDim2.new(1, -32, 0.24, -52)
 		framePreview()
 
-		upgradeList.Position = UDim2.fromOffset(16, 56)
-		upgradeList.Size = UDim2.new(1, -32, 0.46, -24)
-		upgradeDetail.Position = UDim2.new(0, 16, 0.46, 40)
-		upgradeDetail.Size = UDim2.new(1, -32, 0.34, -8)
-		upgradeButton.Position = UDim2.new(0, 16, 1, -60)
-		upgradeButton.Size = UDim2.new(1, -32, 0, 44)
+		leftCard.Position = UDim2.fromScale(0.016, 0.04)
+		leftCard.Size = UDim2.fromScale(0.2, 0.9)
+		upgradeList.Position = UDim2.fromOffset(8, 76)
+		upgradeList.Size = UDim2.new(1, -16, 1, -88)
+		rightCard.Position = UDim2.fromScale(0.784, 0.04)
+		rightCard.Size = UDim2.fromScale(0.2, 0.62)
+		itemsCard.Position = UDim2.fromScale(0.232, 0.56)
+		itemsCard.Size = UDim2.fromScale(0.16, 0.12)
+		oddsHost.Position = UDim2.fromScale(0.232, 0.72)
+		oddsHost.Size = UDim2.fromScale(0.53, 0.12)
+		upgradeButton.AnchorPoint = Vector2.new(0.5, 0)
+		upgradeButton.Position = UDim2.fromScale(0.5, 0.86)
+		upgradeButton.Size = UDim2.fromScale(0.32, 0.075)
 
 		raceList.Position = UDim2.fromOffset(16, 56)
 		raceList.Size = UDim2.new(1, -32, 0.4, -20)
@@ -649,6 +833,16 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		stopButton.Size = UDim2.new(1, -32, 0, 40)
 		raceButton.Position = UDim2.new(0, 16, 1, -60)
 		raceButton.Size = UDim2.new(1, -32, 0, 44)
+
+		testList.Position = UDim2.fromOffset(16, 56)
+		testList.Size = UDim2.new(1, -32, 0.52, -20)
+		testDetail.Position = UDim2.new(0, 16, 0.52, 44)
+		testDetail.Size = UDim2.new(1, -32, 0.28, -8)
+		testButton.Position = UDim2.new(0, 16, 1, -60)
+		testButton.Size = UDim2.new(1, -32, 0, 44)
+
+		fusionBody.Position = UDim2.fromOffset(16, 64)
+		fusionBody.Size = UDim2.new(1, -32, 1, -88)
 	end
 
 	local function setEnabled(control: TextButton, enabled: boolean)
@@ -657,10 +851,141 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		control.BackgroundTransparency = if enabled then 0 else 0.4
 	end
 
-	local function render()
-		local balance = if state ~= nil then state.balance else "—"
-		local notice = if state ~= nil and state.memoryNotice ~= nil then state.memoryNotice else "Data vanishes when the server closes"
-		hud.Text = string.format("Test gold %s    %s", tostring(balance), notice)
+	local render
+
+	local function updateOdds(level)
+		local outcomes = UpgradeConfig.getOutcomes()
+		local function hideAll(caption: string)
+			oddsCaption.Text = caption
+			for _, outcome in ipairs(outcomes) do
+				local row = oddsSegments[outcome.Id]
+				row.segment.Visible = false
+				row.chip.Visible = false
+			end
+		end
+		if type(level) ~= "number" then
+			hideAll("Select a car")
+			return
+		end
+		if level >= CarConfig.MaxUpgradeLevel then
+			hideAll("Already +10")
+			return
+		end
+		local weights = UpgradeConfig.getWeights(level)
+		local total = UpgradeConfig.sumWeights(level)
+		if weights == nil or total == nil or total <= 0 then
+			hideAll("Odds unavailable")
+			return
+		end
+		oddsCaption.Text = ""
+		local exact = {}
+		local whole = {}
+		local sum = 0
+		for _, outcome in ipairs(outcomes) do
+			local value = (weights[outcome.Id] or 0) / total * 100
+			exact[outcome.Id] = value
+			whole[outcome.Id] = math.floor(value)
+			sum += whole[outcome.Id]
+		end
+		local order = {}
+		for _, outcome in ipairs(outcomes) do
+			table.insert(order, outcome.Id)
+		end
+		table.sort(order, function(left, right)
+			return (exact[left] - whole[left]) > (exact[right] - whole[right])
+		end)
+		local cursor = 1
+		while sum < 100 do
+			whole[order[cursor]] += 1
+			sum += 1
+			cursor = cursor % #order + 1
+		end
+		local x = 0
+		for _, outcome in ipairs(outcomes) do
+			local weight = weights[outcome.Id] or 0
+			local share = weight / total
+			local row = oddsSegments[outcome.Id]
+			row.segment.Position = UDim2.new(x, 0, 0, 0)
+			row.segment.Size = UDim2.new(share, 0, 1, 0)
+			row.segment.Visible = share > 0
+			row.chip.Position = UDim2.new(x, 0, 0, 0)
+			row.chip.Size = UDim2.new(share, 0, 1, 0)
+			row.chip.Visible = share > 0
+			row.chip.Text = string.format("%s %d%%", BAR_NAME[outcome.Id] or outcome.Id, whole[outcome.Id])
+			x += share
+		end
+	end
+
+	local function fillUpgradeCars()
+		clearRows(upgradeList)
+		local entries = cars()
+		if #entries == 0 then
+			local empty = label(upgradeList, 15)
+			empty.Size = UDim2.new(1, -12, 0, 40)
+			empty.Text = "No car to upgrade"
+			empty.TextColor3 = CLOUD
+			empty.ZIndex = 6
+			return
+		end
+		for _, entry in ipairs(entries) do
+			local selected = entry.instanceId == upgradeId
+			local blocked = entry.racing == true or upgradePending == true
+			local row = Instance.new("TextButton")
+			row.Size = UDim2.new(1, -8, 0, 58)
+			row.BackgroundColor3 = if selected then ORANGE else ROW
+			row.BackgroundTransparency = if entry.racing == true then 0.4 else 0
+			row.BorderSizePixel = 0
+			row.Text = ""
+			row.AutoButtonColor = blocked ~= true
+			row.Active = blocked ~= true
+			row.ZIndex = 6
+			row.Parent = upgradeList
+			corner(row, 6)
+			local chip = Instance.new("Frame")
+			chip.Position = UDim2.fromOffset(8, 14)
+			chip.Size = UDim2.fromOffset(6, 30)
+			chip.BorderSizePixel = 0
+			chip.Active = false
+			chip.ZIndex = 7
+			chip.Parent = row
+			CarVisualFactory.markChip(chip, entry.qualityId)
+			corner(chip, 3)
+			local name = label(row, 15)
+			name.Font = Enum.Font.GothamBold
+			name.Position = UDim2.fromOffset(20, 6)
+			name.Size = UDim2.new(1, -28, 0, 22)
+			name.Text = entry.displayName
+			name.TextColor3 = if selected then Color3.fromRGB(24, 26, 32) else PAPER
+			name.ZIndex = 7
+			local meta = label(row, 13)
+			meta.Position = UDim2.fromOffset(20, 28)
+			meta.Size = UDim2.new(1, -28, 0, 22)
+			meta.Text = string.format(
+				"%s   +%d   Power %s%s",
+				entry.qualityName,
+				entry.upgradeLevel,
+				tostring(entry.power),
+				if entry.racing == true then "   RACING" else ""
+			)
+			meta.TextColor3 = if selected then Color3.fromRGB(48, 36, 18) else CLOUD
+			meta.ZIndex = 7
+			row.MouseButton1Click:Connect(function()
+				if upgradePending == true or entry.racing == true then
+					return
+				end
+				upgradeId = entry.instanceId
+				upgradeNotice = nil
+				render()
+			end)
+		end
+	end
+
+	function render()
+		hud.Visible = false
+		hud.Text = ""
+		local atBench = currentPage == "upgrade"
+		garageButton.Visible = not atBench
+		rankButton.Visible = not atBench
 		garageButton.BackgroundColor3 = if currentPage == "garage" then GOLD else ORANGE
 
 		local selected = findCar(selectedId)
@@ -696,50 +1021,49 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		showPreview(selected)
 		gachaBoard.update(state)
 
-		if upgradeNotice == "scrap" and upgradeCar == nil then
-			upgradeDetail.Text = "This car was scrapped. Pick another one."
-		elseif upgradeCar == nil then
-			upgradeDetail.Text = "Pick a car first.\nUpgrades only send after you click a row. Upgrades do not cost gold."
-		elseif upgradeCar.racing == true then
-			upgradeDetail.Text = string.format(
-				"%s\n%s  Upgrade +%d  Power %s\nId %s\nThis car is racing. The server will refuse upgrades and scrap.\n%s",
-				upgradeCar.displayName,
-				upgradeCar.qualityName,
-				upgradeCar.upgradeLevel,
-				tostring(upgradeCar.power),
-				upgradeCar.instanceId,
-				oddsText(upgradeCar.upgradeLevel)
-			)
-		else
-			upgradeDetail.Text = string.format(
-				"%s\n%s  Upgrade +%d  Power %s\nId %s\n%s\nOnly the result the server actually rolled is shown.",
-				upgradeCar.displayName,
-				upgradeCar.qualityName,
-				upgradeCar.upgradeLevel,
-				tostring(upgradeCar.power),
-				upgradeCar.instanceId,
-				oddsText(upgradeCar.upgradeLevel)
-			)
+		if upgradeCar ~= nil and upgradeCar.racing == true and upgradePending ~= true then
+			upgradeId = nil
+			upgradeCar = nil
 		end
-		local canUpgrade = upgradeCar ~= nil
+		local rankLevel = if type(state) == "table" and type(state.rebirthLevel) == "number" then state.rebirthLevel else 0
+		local statusText = "SELECT A CAR"
+		if rankLevel < 1 then
+			statusText = "LOCKED UNTIL T1"
+		elseif upgradeNotice == "scrap" and upgradeCar == nil then
+			statusText = "DESTROYED"
+		elseif upgradeCar == nil then
+			statusText = "SELECT A CAR"
+		elseif upgradeCar.racing == true then
+			statusText = "RACING"
+		elseif upgradeCar.upgradeLevel >= CarConfig.MaxUpgradeLevel then
+			statusText = "MAX +10"
+		elseif upgradePending then
+			statusText = "WORKING"
+		else
+			statusText = "READY"
+		end
+		statName.Text = if upgradeCar ~= nil then upgradeCar.displayName else "—"
+		statRarity.Text = if upgradeCar ~= nil then upgradeCar.qualityName else "—"
+		if upgradeCar ~= nil then
+			CarVisualFactory.applyQualityText(statRarity, upgradeCar.qualityId)
+		else
+			statRarity.TextColor3 = PAPER
+		end
+		statLevel.Text = if upgradeCar ~= nil then string.format("+%d", upgradeCar.upgradeLevel) else "—"
+		statPower.Text = if upgradeCar ~= nil then tostring(upgradeCar.power) else "—"
+		statStatus.Text = statusText
+		local canUpgrade = rankLevel >= 1
+			and upgradeCar ~= nil
 			and upgradePending ~= true
 			and upgradeCar.racing ~= true
 			and upgradeCar.upgradeLevel < CarConfig.MaxUpgradeLevel
-		if upgradeCar == nil then
-			upgradeButton.Text = "Pick a car"
-		elseif upgradeCar.racing == true then
-			upgradeButton.Text = "Racing"
-		elseif upgradeCar.upgradeLevel >= CarConfig.MaxUpgradeLevel then
-			upgradeButton.Text = "Already +10"
-		else
-			upgradeButton.Text = string.format("Upgrade: %s +%d", upgradeCar.displayName, upgradeCar.upgradeLevel)
-		end
+		upgradeButton.Text = "UPGRADE"
 		setEnabled(upgradeButton, canUpgrade)
-		fillCars(upgradeList, upgradeId, function(instanceId)
-			upgradeId = instanceId
-			upgradeNotice = nil
-			render()
-		end, "No car to upgrade")
+		updateOdds(if upgradeCar ~= nil then upgradeCar.upgradeLevel else nil)
+		fillUpgradeCars()
+		if currentPage == "upgrade" and handlers.onPreviewCar ~= nil then
+			handlers.onPreviewCar(upgradeCar)
+		end
 
 		local shownCar = if autoBusy and racingCar ~= nil then racingCar else selected
 		local statusLine = "Auto race has not started."
@@ -784,6 +1108,25 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		else
 			raceStatus.Visible = false
 		end
+		local testCar = findCar(testId)
+		if testCar == nil then
+			testDetail.Text = "Pick a car to run one lap.\nThis lap does not pay gold."
+			testButton.Text = "Pick a car"
+		else
+			testDetail.Text = string.format(
+				"%s\n%s  Upgrade +%d  Power %s\nPlace it at the start. This lap does not pay gold.",
+				testCar.displayName,
+				testCar.qualityName,
+				testCar.upgradeLevel,
+				tostring(testCar.power)
+			)
+			testButton.Text = string.format("Place %s", testCar.displayName)
+		end
+		setEnabled(testButton, testCar ~= nil)
+		fillCars(testList, testId, function(instanceId)
+			testId = instanceId
+			render()
+		end, "Garage is empty")
 		fillCars(raceList, if autoBusy and racingCar ~= nil then racingCar.instanceId else selectedId, function(instanceId)
 			if handlers.onSelect ~= nil then
 				handlers.onSelect(instanceId)
@@ -805,6 +1148,9 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			upgradeId = nil
 			upgradeNotice = "scrap"
 		end
+		if testId ~= nil and findCar(testId) == nil then
+			testId = nil
+		end
 		render()
 	end
 
@@ -812,9 +1158,11 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		if panels[nextPage] == nil then
 			return
 		end
-		if nextPage == "upgrade" or currentPage == "upgrade" then
+		local wasUpgrade = currentPage == "upgrade"
+		if nextPage == "upgrade" or wasUpgrade then
 			upgradeId = nil
 			upgradeNotice = nil
+			resultBanner.Visible = false
 		end
 		currentPage = nextPage
 		for pageName, panel in pairs(panels) do
@@ -823,15 +1171,27 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		if nextPage == "gacha" then
 			gachaBoard.onOpen()
 		end
+		if nextPage == "upgrade" then
+			if handlers.onEnterBench ~= nil then
+				handlers.onEnterBench()
+			end
+		elseif wasUpgrade and handlers.onLeaveBench ~= nil then
+			handlers.onLeaveBench()
+		end
 		render()
 	end
 
 	function api.close()
+		local wasUpgrade = currentPage == "upgrade"
 		currentPage = nil
 		for _, panel in pairs(panels) do
 			panel.Visible = false
 		end
 		gachaBoard.dismiss()
+		resultBanner.Visible = false
+		if wasUpgrade and handlers.onLeaveBench ~= nil then
+			handlers.onLeaveBench()
+		end
 		render()
 	end
 
@@ -899,6 +1259,33 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		render()
 	end
 
+	function api.showUpgradeResult(outcomeId: string)
+		local text = BANNER[outcomeId] or tostring(outcomeId)
+		resultBanner.Text = text
+		resultBanner.TextColor3 = FLASH[outcomeId] or PAPER
+		resultBanner.Visible = currentPage == "upgrade"
+		task.delay(1.1, function()
+			if resultBanner.Text == text then
+				resultBanner.Visible = false
+			end
+		end)
+	end
+
+	function api.playUpgrade(result)
+		if type(result) ~= "table" or type(result.outcome) ~= "string" then
+			return
+		end
+		local played = false
+		if handlers.onUpgradeStrike ~= nil then
+			played = handlers.onUpgradeStrike(result.outcome, function()
+				api.showUpgradeResult(result.outcome)
+			end) == true
+		end
+		if played ~= true then
+			api.showUpgradeResult(result.outcome)
+		end
+	end
+
 	function api.setRacing(active: boolean, text: string?)
 		racing = active
 		racingText = if active then (text or "Race in progress") else ""
@@ -920,7 +1307,15 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	garageClose.MouseButton1Click:Connect(api.close)
 	gachaClose.MouseButton1Click:Connect(api.close)
 	upgradeClose.MouseButton1Click:Connect(api.close)
+	fusionClose.MouseButton1Click:Connect(api.close)
 	raceClose.MouseButton1Click:Connect(api.close)
+	testClose.MouseButton1Click:Connect(api.close)
+	testButton.MouseButton1Click:Connect(function()
+		if testId == nil or handlers.onTestPlace == nil then
+			return
+		end
+		handlers.onTestPlace(testId)
+	end)
 	gachaBoard.setPullHandler(function()
 		if handlers.onPull ~= nil then
 			handlers.onPull()
@@ -931,7 +1326,7 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			handlers.onAutoSell(qualities, confirmLegendary)
 		end
 	end)
-	upgradeButton.MouseButton1Click:Connect(function()
+	local function pressUpgrade()
 		local target = upgradeId
 		local car = findCar(target)
 		if car == nil or car.racing == true or car.upgradeLevel >= CarConfig.MaxUpgradeLevel or upgradePending then
@@ -940,7 +1335,8 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 		if handlers.onUpgrade ~= nil then
 			handlers.onUpgrade(target)
 		end
-	end)
+	end
+	upgradeButton.MouseButton1Click:Connect(pressUpgrade)
 	raceButton.MouseButton1Click:Connect(function()
 		if handlers.onAutoStart ~= nil then
 			handlers.onAutoStart(selectedId)
@@ -951,6 +1347,11 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 	stopButton.MouseButton1Click:Connect(function()
 		if handlers.onAutoStop ~= nil then
 			handlers.onAutoStop()
+		end
+	end)
+	rankButton.MouseButton1Click:Connect(function()
+		if handlers.onRankUp ~= nil then
+			handlers.onRankUp()
 		end
 	end)
 	raceStatusToggle.MouseButton1Click:Connect(function()
@@ -987,6 +1388,29 @@ function GarageUI.mount(playerGui: PlayerGui, handlers)
 			viewportConn:Disconnect()
 		end
 	end)
+
+	UserInputService.InputBegan:Connect(function(input)
+		if input.KeyCode ~= Enum.KeyCode.Escape then
+			return
+		end
+		if currentPage == "upgrade" then
+			api.close()
+		end
+	end)
+
+	if RunService:IsStudio() then
+		_G.CarForgeTaxUpgradeTest = {
+			select = function(instanceId)
+				upgradeId = instanceId
+				upgradeNotice = nil
+				render()
+			end,
+			close = function()
+				api.close()
+			end,
+			upgrade = pressUpgrade,
+		}
+	end
 
 	preview:GetPropertyChangedSignal("AbsoluteSize"):Connect(framePreview)
 	bindViewport()

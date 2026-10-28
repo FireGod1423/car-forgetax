@@ -20,6 +20,7 @@ end
 
 local CarConfig = importShared("CarConfig")
 local CarCatalog = importShared("CarCatalog")
+local PoolConfig = importShared("PoolConfig")
 local RandomSource = importShared("RandomSource")
 local GoldWallet = importServer("GoldWallet")
 local CarInventoryService = importServer("CarInventoryService")
@@ -85,49 +86,148 @@ end
 
 local function testWeights()
 	local expected = {
-		{ id = "Common", weight = 50, bonus = 0, displayName = "Common", colorName = "White" },
-		{ id = "Uncommon", weight = 30, bonus = 8, displayName = "Uncommon", colorName = "Green" },
-		{ id = "Rare", weight = 15, bonus = 20, displayName = "Rare", colorName = "Blue" },
-		{ id = "Epic", weight = 4, bonus = 38, displayName = "Epic", colorName = "Purple" },
-		{ id = "Legendary", weight = 1, bonus = 65, displayName = "Legendary", colorName = "Orange" },
+		{ id = "Common", bonus = 0, minRank = 0, color = { 154, 163, 174 } },
+		{ id = "Uncommon", bonus = 8, minRank = 0, color = { 63, 191, 121 } },
+		{ id = "Rare", bonus = 20, minRank = 0, color = { 61, 139, 255 } },
+		{ id = "Epic", bonus = 38, minRank = 0, color = { 156, 92, 255 } },
+		{ id = "Legendary", bonus = 65, minRank = 1, color = { 245, 184, 65 } },
+		{ id = "Mythic", bonus = 95, minRank = 2, color = { 237, 80, 103 } },
+		{ id = "Divine", bonus = 130, minRank = 3, color = { 243, 226, 173 } },
+		{ id = "Celestial", bonus = 170, minRank = 4, color = { 50, 211, 224 } },
+		{ id = "Transcendent", bonus = 215, minRank = 5, color = { 230, 92, 224 } },
+		{ id = "Eternal", bonus = 265, minRank = 6, color = { 243, 138, 63 } },
+		{ id = "Immortal", bonus = 320, minRank = 7, color = { 26, 175, 148 } },
+		{ id = "Astral", bonus = 380, minRank = 8, color = { 157, 141, 255 } },
+		{ id = "Cosmic", bonus = 445, minRank = 9, color = { 65, 92, 184 } },
+		{ id = "Primordial", bonus = 515, minRank = 10, color = { 183, 100, 71 } },
+		{ id = "Singularity", bonus = 590, minRank = 10, color = { 36, 41, 51 } },
 	}
 
 	local qualities = CarConfig.getQualities()
 	assertEqual(#qualities, #expected, "品質數量")
-
-	local total = 0
 	for index, spec in ipairs(expected) do
 		local quality = qualities[index]
 		assertEqual(quality.Id, spec.id, "品質順序")
-		assertEqual(quality.Weight, spec.weight, spec.id .. " 權重")
 		assertEqual(quality.Bonus, spec.bonus, spec.id .. " 加成")
-		assertEqual(quality.DisplayName, spec.displayName, spec.id .. " 名稱")
-		assertEqual(quality.ColorName, spec.colorName, spec.id .. " 顏色")
-		assertEqual(quality.AvailableFromRebirth, 0, spec.id .. " 開放重生")
-		total += quality.Weight
+		assertEqual(quality.DisplayName, spec.id, spec.id .. " 名稱")
+		assertEqual(quality.AvailableFromRebirth, spec.minRank, spec.id .. " 開放等級")
+		assertEqual(quality.UiColor[1], spec.color[1], spec.id .. " 介面色")
+		assertEqual(quality.UiColor[2], spec.color[2], spec.id .. " 介面色")
+		assertEqual(quality.UiColor[3], spec.color[3], spec.id .. " 介面色")
+		assertEqual(quality.Weight, nil, spec.id .. " 不該再有全域權重")
 	end
-	assertEqual(total, 100, "機率總和")
-	assertEqual(CarConfig.sumWeights(), 100, "權重函式")
 
-	-- 累積區間：1-50、51-80、81-95、96-99、100。
+	local caps = {
+		T0 = "Epic",
+		T1 = "Legendary",
+		T2 = "Mythic",
+		T3 = "Divine",
+		T4 = "Celestial",
+		T5 = "Transcendent",
+		T6 = "Eternal",
+		T7 = "Immortal",
+		T8 = "Astral",
+		T9 = "Cosmic",
+		T10 = "Singularity",
+	}
+	local prices = {
+		T0 = 500,
+		T1 = 1000,
+		T2 = 2000,
+		T3 = 4000,
+		T4 = 7500,
+		T5 = 14000,
+		T6 = 25000,
+		T7 = 45000,
+		T8 = 80000,
+		T9 = 140000,
+		T10 = 250000,
+	}
+	local expectedPools = {
+		T0 = { Common = 5000, Uncommon = 3000, Rare = 1500, Epic = 500 },
+		T1 = { Common = 4900, Uncommon = 3000, Rare = 1500, Epic = 400, Legendary = 200 },
+		T2 = { Uncommon = 4900, Rare = 3000, Epic = 1500, Legendary = 500, Mythic = 100 },
+		T3 = { Rare = 4950, Epic = 3000, Legendary = 1500, Mythic = 500, Divine = 50 },
+		T4 = { Epic = 4980, Legendary = 3000, Mythic = 1500, Divine = 500, Celestial = 20 },
+		T5 = { Legendary = 4990, Mythic = 3000, Divine = 1500, Celestial = 500, Transcendent = 10 },
+		T6 = { Mythic = 4990, Divine = 3000, Celestial = 1500, Transcendent = 500, Eternal = 10 },
+		T7 = { Divine = 4990, Celestial = 3000, Transcendent = 1500, Eternal = 500, Immortal = 10 },
+		T8 = { Celestial = 4990, Transcendent = 3000, Eternal = 1500, Immortal = 500, Astral = 10 },
+		T9 = { Transcendent = 4990, Eternal = 3000, Immortal = 1500, Astral = 500, Cosmic = 10 },
+		T10 = { Immortal = 4999, Astral = 3000, Cosmic = 1500, Primordial = 500, Singularity = 1 },
+	}
+	assertEqual(#PoolConfig.getAll(), 11, "抽車池數量")
+	for _, pool in ipairs(PoolConfig.getAll()) do
+		local spec = expectedPools[pool.Id]
+		assertEqual(PoolConfig.sumWeights(pool.Id), 10000, pool.Id .. " 機率合計")
+		assertEqual(pool.MaxQuality, caps[pool.Id], pool.Id .. " 最高品質")
+		assertEqual(PoolConfig.price(pool.Id), prices[pool.Id], pool.Id .. " 價格")
+		assertEqual(#pool.Qualities, if pool.Id == "T0" then 4 else 5, pool.Id .. " 品質數量")
+		local described = PoolConfig.describe(pool.Id, 0)
+		local shown = 0
+		for _, rate in ipairs(described.rates) do
+			assertEqual(rate.weight, spec[rate.qualityId], pool.Id .. " " .. rate.qualityId .. " 權重")
+			assertEqual(rate.percentText, PoolConfig.percentLabel(rate.weight), pool.Id .. " " .. rate.qualityId .. " 顯示機率")
+			shown += rate.weight
+			spec[rate.qualityId] = nil
+		end
+		for qualityId in pairs(spec) do
+			error(pool.Id .. " 少了品質 " .. qualityId)
+		end
+		assertEqual(shown, 10000, pool.Id .. " 介面權重")
+		assertEqual(#described.qualities, #pool.Qualities, pool.Id .. " 介面品質數量")
+		for _, qualityId in ipairs(CarConfig.getQualities()) do
+			local listed = false
+			for _, rate in ipairs(described.rates) do
+				if rate.qualityId == qualityId.Id then
+					listed = true
+				end
+			end
+			assertEqual(listed, PoolConfig.contains(pool.Id, qualityId.Id), pool.Id .. " 介面與伺服器品質不一致：" .. qualityId.Id)
+		end
+	end
+	assertEqual(PoolConfig.contains("T0", "Legendary"), false, "T0 不該含傳說")
+	assertEqual(PoolConfig.contains("T2", "Common"), false, "T2 不該含普通")
+	assertEqual(PoolConfig.get("T10").Weights.Singularity, 1, "T10 奇點權重")
+	assertEqual(PoolConfig.percentLabel(1), "0.01", "0.01% 顯示")
+	assertEqual(PoolConfig.percentLabel(4999), "49.99", "49.99% 顯示")
+	assertEqual(PoolConfig.percentLabel(4950), "49.5", "49.5% 顯示")
+	assertEqual(PoolConfig.get("T0").OddsStatus, "specified", "T0 機率狀態")
+	assertEqual(PoolConfig.get("T1").OddsStatus, "specified", "T1 機率狀態")
+	assertEqual(PoolConfig.get("T1").PriceStatus, "test", "T1 價格不該標成定案")
+
 	local brackets = {
 		{ roll = 1, quality = "Common" },
-		{ roll = 50, quality = "Common" },
-		{ roll = 51, quality = "Uncommon" },
-		{ roll = 80, quality = "Uncommon" },
-		{ roll = 81, quality = "Rare" },
-		{ roll = 95, quality = "Rare" },
-		{ roll = 96, quality = "Epic" },
-		{ roll = 99, quality = "Epic" },
-		{ roll = 100, quality = "Legendary" },
+		{ roll = 5000, quality = "Common" },
+		{ roll = 5001, quality = "Uncommon" },
+		{ roll = 8000, quality = "Uncommon" },
+		{ roll = 8001, quality = "Rare" },
+		{ roll = 9500, quality = "Rare" },
+		{ roll = 9501, quality = "Epic" },
+		{ roll = 10000, quality = "Epic" },
 	}
 	for _, bracket in ipairs(brackets) do
 		local rng = scriptedRng({ bracket.roll })
-		local qualityId, reason = CarConfig.rollQuality(rng)
-		assertEqual(reason, nil, "區間抽獎不該失敗")
-		assertEqual(qualityId, bracket.quality, "點數 " .. tostring(bracket.roll))
+		local qualityId, reason = PoolConfig.roll("T0", rng)
+		assertEqual(reason, nil, "T0 區間抽獎不該失敗")
+		assertEqual(qualityId, bracket.quality, "T0 點數 " .. tostring(bracket.roll))
 	end
-	return "50+30+15+4+1=100"
+	local legendaryRoll = scriptedRng({ 10000 })
+	local legendaryId = PoolConfig.roll("T1", legendaryRoll)
+	assertEqual(legendaryId, "Legendary", "T1 的 10000 點應該是傳說")
+	local t2Roll = scriptedRng({ 1 })
+	assertEqual(PoolConfig.roll("T2", t2Roll), "Uncommon", "T2 第一點不該是普通")
+	local singularityRoll = scriptedRng({ 10000 })
+	assertEqual(PoolConfig.roll("T10", singularityRoll), "Singularity", "T10 最後一點應該是奇點")
+	local wallet, _, gacha = newServices({
+		rng = scriptedRng({ 1, 1 }),
+	})
+	assertTrue(wallet:Credit("t2-player", PoolConfig.price("T2")), "T2 測試金幣")
+	local blocked = gacha:Pull("t2-player", 2, "t2-block", "T2")
+	assertEqual(blocked.ok, true, "T2 抽車失敗")
+	assertEqual(blocked.quality, "Uncommon", "T2 抽到了表外品質")
+	assertTrue(blocked.quality ~= "Common", "T2 抽到普通")
+	return "十一個池合計 10000；T0 無傳說、T2 無普通、T10 奇點 0.01%"
 end
 
 local function testDistribution()
@@ -152,20 +252,23 @@ local function testDistribution()
 		assertTrue(seen[result.car.InstanceId] ~= true, "模擬出現重複 ID")
 		seen[result.car.InstanceId] = true
 		assertTrue(result.modelId ~= "test_common_r1", "R0 模擬抽到未解鎖車")
+		assertTrue(result.quality ~= "Legendary", "T0 抽到傳說")
 	end
 
-	local totalWeight = CarConfig.sumWeights()
+	local described = PoolConfig.describe("T0", 0)
 	local parts = {}
-	for _, quality in ipairs(CarConfig.getQualities()) do
-		local probability = quality.Weight / totalWeight
+	for _, rate in ipairs(described.rates) do
+		local probability = rate.weight / 10000
 		local expected = samples * probability
 		local tolerance = math.ceil(5 * math.sqrt(samples * probability * (1 - probability)))
-		local actual = counts[quality.Id]
+		local actual = counts[rate.qualityId]
 		if math.abs(actual - expected) > tolerance then
-			error(string.format("%s 出現 %d 次，期望 %.0f，容差 ±%d", quality.Id, actual, expected, tolerance))
+			error(string.format("%s 出現 %d 次，期望 %.0f，容差 ±%d", rate.qualityId, actual, expected, tolerance))
 		end
-		table.insert(parts, string.format("%s=%d（±%d）", quality.DisplayName, actual, tolerance))
+		table.insert(parts, string.format("%s=%d（±%d）", rate.displayName, actual, tolerance))
 	end
+	assertEqual(counts.Legendary, 0, "T0 分布出現傳說")
+	assertEqual(counts.Singularity, 0, "T0 分布出現奇點")
 
 	assertEqual(wallet:GetBalance(player), 0, "模擬扣完全部金幣")
 	assertEqual(#inventory:ListCars(player), samples, "模擬車輛數量")
@@ -174,23 +277,35 @@ end
 
 local function testRebirthZeroLock()
 	local cars = CarCatalog.getAll()
-	assertEqual(#cars, 6, "測試車款數量")
+	assertEqual(#cars, 21, "車款數量")
+	assertEqual(#CarCatalog.getOfficial(), 15, "正式車款數量")
 
 	local unlockedAtZero = 0
 	for _, car in ipairs(cars) do
 		if car.ModelId == "test_common_r1" then
 			assertEqual(car.UnlockRebirth, 1, "R1 測試車解鎖階級")
 			assertEqual(car.Quality, "Common", "R1 測試車品質")
+		elseif car.Official == true then
+			local quality = CarConfig.getQuality(car.Quality)
+			assertEqual(car.UnlockRebirth, quality.AvailableFromRebirth, car.ModelId .. " 解鎖等級")
+			local ui = quality.UiColor
+			assertTrue(
+				car.Paint[1] ~= ui[1] or car.Paint[2] ~= ui[2] or car.Paint[3] ~= ui[3],
+				car.ModelId .. " 烤漆用了品質色"
+			)
+			if car.UnlockRebirth == 0 then
+				unlockedAtZero += 1
+			end
 		else
 			assertEqual(car.UnlockRebirth, 0, car.ModelId .. " 應在 R0 解鎖")
 			unlockedAtZero += 1
 		end
 	end
-	assertEqual(unlockedAtZero, 5, "R0 車款數量")
+	assertEqual(unlockedAtZero, 9, "R0 可解鎖車款數量")
 
 	local commonAtZero = CarCatalog.getEligible("Common", 0)
-	assertEqual(#commonAtZero, 1, "R0 普通車數量")
-	assertEqual(commonAtZero[1].ModelId, "test_common_r0", "R0 只能選到普通測試車")
+	assertEqual(#commonAtZero, 2, "R0 普通車數量")
+	assertEqual(commonAtZero[1].ModelId, "test_common_r0", "R0 第一台仍是普通測試車")
 
 	local player = "rebirth-zero"
 	local rng = scriptedRng({ 1, 1 })
@@ -208,6 +323,9 @@ local function testRebirthZeroLock()
 		local result = randomGacha:Pull(player, 0, "r0-" .. tostring(sample))
 		assertTrue(result.ok, "R0 隨機抽失敗：" .. tostring(result.reason))
 		assertTrue(result.modelId ~= "test_common_r1", "R0 抽到一階重生測試車")
+		assertTrue(result.quality ~= "Legendary", "R0 抽到傳說")
+		local rolled = CarConfig.qualityRank(result.quality)
+		assertTrue(rolled ~= nil and rolled <= 4, "R0 抽到 Epic 以上")
 	end
 	assertEqual(#randomInventory:ListCars(player), 100, "R0 隨機車輛數")
 	assertEqual(inventory:ListCars(player)[1].ModelId, "test_common_r0", "獨立環境不被隨機抽車影響")
@@ -216,7 +334,7 @@ end
 
 local function testRebirthOneUnlock()
 	local commonAtOne = CarCatalog.getEligible("Common", 1)
-	assertEqual(#commonAtOne, 2, "R1 普通車數量")
+	assertEqual(#commonAtOne, 3, "R1 普通車數量")
 	assertEqual(commonAtOne[2].ModelId, "test_common_r1", "R1 可選車順序")
 
 	local player = "rebirth-one"
@@ -296,13 +414,13 @@ local function testDebit()
 	local priceOk, priceErr = pcall(function()
 		local customPlayer = "custom-price"
 		local customWallet, _, customGacha = newServices({
-			rng = scriptedRng({ 100, 1 }),
+			rng = scriptedRng({ 10000, 1 }),
 		})
 		assertTrue(customWallet:Credit(customPlayer, 42), "自訂價格金幣")
 		local custom = customGacha:Pull(customPlayer, 0, "custom-price")
 		assertTrue(custom.ok, "自訂價格抽車失敗：" .. tostring(custom.reason))
 		assertEqual(custom.price, 42, "自訂價格")
-		assertEqual(custom.quality, "Legendary", "自訂價格仍走公布機率")
+		assertEqual(custom.quality, "Epic", "自訂價格仍走 T0 機率")
 		assertEqual(customWallet:GetBalance(customPlayer), 0, "自訂價格扣款")
 	end)
 	CarConfig.SinglePullPrice = previousPrice
@@ -366,7 +484,7 @@ end
 
 local function testInitialUpgrade()
 	local wallet, inventory, gacha = newServices({
-		rng = scriptedRng({ 81, 1 }),
+		rng = scriptedRng({ 8001, 1 }),
 		now = function()
 			return 99
 		end,
@@ -512,7 +630,7 @@ end
 
 local function testNoUnlockedModel()
 	local player = "empty-legendary"
-	local rng, calls = scriptedRng({ 100 })
+	local rng, calls = scriptedRng({ 10000 })
 	local wallet, inventory, gacha = newServices({
 		rng = rng,
 		catalog = {
@@ -524,16 +642,23 @@ local function testNoUnlockedModel()
 			end,
 		},
 	})
-	assertTrue(wallet:Credit(player, 500), "空車池金幣")
-	local result = gacha:Pull(player, 0, "no-legendary")
+	local price = PoolConfig.price("T1")
+	assertTrue(wallet:Credit(player, price), "空車池金幣")
+	local locked = gacha:Pull(player, 0, "locked-pool", "T1")
+	assertEqual(locked.ok, false, "未解鎖的池仍抽成功")
+	assertEqual(locked.reason, CarGachaService.Reason.PoolLocked, "未解鎖原因")
+	assertEqual(locked.charged, false, "未解鎖仍扣款")
+	assertEqual(wallet:GetBalance(player), price, "未解鎖餘額")
+
+	local result = gacha:Pull(player, 1, "no-legendary", "T1")
 	assertEqual(result.ok, false, "沒有車款卻成功")
 	assertEqual(result.reason, CarGachaService.Reason.NoUnlockedModel, "沒有車款原因")
 	assertEqual(result.quality, "Legendary", "失敗時改抽了別的品質")
 	assertEqual(result.charged, false, "沒有車款仍扣款")
-	assertEqual(wallet:GetBalance(player), 500, "空車池餘額")
+	assertEqual(wallet:GetBalance(player), price, "空車池餘額")
 	assertEqual(#inventory:ListCars(player), 0, "空車池發了車")
 
-	local replay = gacha:Pull(player, 0, "no-legendary")
+	local replay = gacha:Pull(player, 1, "no-legendary", "T1")
 	assertEqual(replay.replayed, true, "空車池重送")
 	assertEqual(replay.quality, "Legendary", "重送時改抽品質")
 	assertEqual(calls(), 1, "重送又抽了一次")
@@ -549,19 +674,15 @@ local function testPower()
 		{ 0, "Rare", 0, 120 },
 		{ 0, "Epic", 0, 138 },
 		{ 0, "Legendary", 0, 165 },
-		{ 0, "Common", 1, 112 },
-		{ 0, "Common", 2, 127 },
-		{ 0, "Common", 3, 145 },
-		{ 0, "Common", 4, 166 },
-		{ 0, "Common", 5, 190 },
-		{ 0, "Common", 6, 217 },
-		{ 0, "Common", 7, 247 },
-		{ 0, "Common", 8, 280 },
-		{ 0, "Common", 9, 316 },
-		{ 0, "Common", 10, 355 },
-		{ 10, "Legendary", 10, 520 },
-		{ 3, "Rare", 1, 162 },
-		{ 2, "Uncommon", 3, 173 },
+		{ 0, "Mythic", 0, 195 },
+		{ 0, "Common", 1, 100 },
+		{ 0, "Common", 10, 100 },
+		{ 5, "Epic", 0, 188 },
+		{ 5, "Epic", 4, 188 },
+		{ 10, "Legendary", 0, 265 },
+		{ 10, "Legendary", 10, 265 },
+		{ 3, "Rare", 1, 150 },
+		{ 2, "Uncommon", 3, 128 },
 	}
 
 	for _, case in ipairs(cases) do
@@ -580,7 +701,7 @@ local function testPower()
 	expectReject(-1, "Common", 0, "InvalidUpgradeLevel")
 	expectReject(11, "Common", 0, "InvalidUpgradeLevel")
 	expectReject(1.5, "Common", 0, "InvalidUpgradeLevel")
-	expectReject(0, "Mythic", 0, "InvalidQuality")
+	expectReject(0, "NoSuchQuality", 0, "InvalidQuality")
 	expectReject(0, "Common", -1, "InvalidRebirth")
 	expectReject(0, "Common", 11, "InvalidRebirth")
 
@@ -592,12 +713,42 @@ local function testPower()
 		CarConfig.calculatePower(4, commonR1.Quality, 2),
 		"同品質車型出現額外性能差"
 	)
-	return "R10 滿級傳說為 520，同品質車型性能相同"
+	assertEqual(
+		CarConfig.calculatePower(0, "Common", 0),
+		CarConfig.calculatePower(0, "Common", 10),
+		"T 等級改了普通車 Power"
+	)
+	assertEqual(
+		CarConfig.calculatePower(5, "Epic", 0),
+		CarConfig.calculatePower(5, "Epic", 4),
+		"抽車池等級改了史詩車 Power"
+	)
+
+	local walletT0, _, gachaT0 = newServices({
+		rng = scriptedRng({ 1, 1 }),
+	})
+	assertTrue(walletT0:Credit("power-t0", PoolConfig.price("T0")), "T0 性能測試金幣")
+	local fromT0 = gachaT0:Pull("power-t0", 0, "power-t0", "T0")
+	local walletT1, _, gachaT1 = newServices({
+		rng = scriptedRng({ 1, 1 }),
+	})
+	assertTrue(walletT1:Credit("power-t1", PoolConfig.price("T1")), "T1 性能測試金幣")
+	local fromT1 = gachaT1:Pull("power-t1", 1, "power-t1", "T1")
+	assertEqual(fromT0.quality, "Common", "T0 這次不是普通")
+	assertEqual(fromT1.quality, "Common", "T1 這次不是普通")
+	assertEqual(fromT0.car.AcquiredRebirth, 0, "T0 取得等級")
+	assertEqual(fromT1.car.AcquiredRebirth, 1, "T1 取得等級")
+	assertEqual(
+		CarConfig.calculatePower(fromT0.car.UpgradeLevel, fromT0.quality, fromT0.car.AcquiredRebirth),
+		CarConfig.calculatePower(fromT1.car.UpgradeLevel, fromT1.quality, fromT1.car.AcquiredRebirth),
+		"不同車商的同品質車 Power 不同"
+	)
+	return "同品質同強化等級的 Power 與抽車池、T 等級無關"
 end
 
 function Tests.run()
 	local cases = {
-		{ "五種品質機率總和為 100%", testWeights },
+		{ "十五種品質與 T0～T10 抽車池", testWeights },
 		{ "一萬次模擬抽取分布", testDistribution },
 		{ "R0 不能取得 R1 車型", testRebirthZeroLock },
 		{ "R1 可以取得已解鎖車型", testRebirthOneUnlock },

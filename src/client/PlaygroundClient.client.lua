@@ -9,6 +9,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared")
 local CarVisualFactory = require(sharedFolder:WaitForChild("CarVisualFactory"))
 local GarageUI = require(script.Parent:WaitForChild("GarageUI"))
+local SpectatorCamera = require(script.Parent:WaitForChild("SpectatorCamera"))
+local WorkbenchView = require(script.Parent:WaitForChild("WorkbenchView"))
 
 local remotes = ReplicatedStorage:WaitForChild("CarForgeTaxRemotes", 30)
 local actionRemote = remotes:WaitForChild("Action")
@@ -22,6 +24,7 @@ local REASONS = {
 	NoSelectedCar = "Pick a race car first.",
 	RaceInProgress = "A race is already in progress.",
 	MaxUpgradeLevel = "Already +10. It cannot be upgraded again.",
+	MaxRank = "Already T10.",
 	InvalidToken = "The request id is invalid.",
 	UnknownAction = "That action cannot be used.",
 	NoUnlockedModel = "No car of this quality is available yet.",
@@ -30,6 +33,7 @@ local REASONS = {
 	BossDisabled = "The Machine Tyrant is not open.",
 	NeedsConfirm = "Selling Legendaries automatically needs one more confirmation.",
 	CarRacing = "This car is racing. It cannot be upgraded or scrapped.",
+	RankLocked = "Upgrades unlock at T1 Street Racer.",
 }
 
 local busy = false
@@ -138,6 +142,8 @@ local function refresh()
 	return state
 end
 
+local openStation = "R0Dealer"
+
 local function pull()
 	if busy or ui.isBusy() then
 		return
@@ -145,7 +151,9 @@ local function pull()
 	busy = true
 	ui.lockPull(true)
 	ui.beginPullCooldown()
-	local result = call("Pull")
+	local result = call("Pull", {
+		stationId = openStation,
+	})
 	if result.reason ~= "RateLimited" then
 		ui.beginPullCooldown()
 	end
@@ -172,6 +180,23 @@ local function pull()
 	end)
 end
 
+local function findBench(): Model?
+	local playground = workspace:FindFirstChild("CarForgeTaxPlayground")
+	if playground == nil then
+		return nil
+	end
+	local key = tostring(player.UserId)
+	for _, child in ipairs(playground:GetChildren()) do
+		if child.Name == "PrivateGarage" and tostring(child:GetAttribute("OwnerKey")) == key then
+			local bench = child:FindFirstChild("UpgradeBench")
+			if bench ~= nil and bench:IsA("Model") then
+				return bench
+			end
+		end
+	end
+	return nil
+end
+
 	local function upgrade(instanceId)
 		if busy then
 			return
@@ -186,29 +211,17 @@ end
 		local result = call("Upgrade", {
 			instanceId = instanceId,
 		})
+		if ui ~= nil and result.ok == true and result.outcome ~= nil then
+			ui.playUpgrade(result)
+		end
 		refresh()
 		busy = false
 		if ui ~= nil then
 			ui.setUpgradePending(false)
 		end
-		if result.outcome ~= nil then
-			ui.flash(result.outcome)
-		end
 		if result.ok ~= true then
 			ui.toast(reasonText(result))
-			return
 		end
-		if result.removed == true then
-			ui.toast("Scrapped. This car was removed from the garage.")
-			return
-		end
-		ui.toast(string.format(
-			"%s: +%s → +%s, Power %s. No gold spent.",
-			tostring(result.outcomeName or result.outcome),
-			tostring(result.previousLevel),
-			tostring(result.upgradeLevel),
-			tostring(result.power)
-		))
 	end
 
 local function startAuto(instanceId)
@@ -252,6 +265,12 @@ local function stopAuto()
 	end
 end
 
+SpectatorCamera.mount(player, playerGui)
+local workbench = WorkbenchView.mount(player, function()
+	if ui ~= nil then
+		ui.close()
+	end
+end)
 ui = GarageUI.mount(playerGui, {
 	onRefresh = refresh,
 	onSelect = function(instanceId)
@@ -270,6 +289,7 @@ ui = GarageUI.mount(playerGui, {
 		local result = call("SetAutoSell", {
 			qualities = qualities,
 			confirmLegendary = confirmLegendary == true,
+			stationId = openStation,
 		})
 		refresh()
 		if result.ok ~= true then
@@ -277,11 +297,55 @@ ui = GarageUI.mount(playerGui, {
 		end
 	end,
 	onUpgrade = upgrade,
+	onEnterBench = function()
+		local ok, entered = pcall(function()
+			return workbench.enter(findBench())
+		end)
+		if ok ~= true or entered ~= true then
+			ui.toast("The workbench is not ready.")
+		end
+	end,
+	onLeaveBench = function()
+		workbench.leave()
+	end,
+	onPreviewCar = function(car)
+		workbench.showCar(car)
+	end,
+	onUpgradeStrike = function(outcomeId, onImpact)
+		return workbench.play(outcomeId, onImpact)
+	end,
 	onAutoStart = function(instanceId)
 		startAuto(instanceId)
 	end,
 	onAutoStop = function()
 		stopAuto()
+	end,
+	onTestPlace = function(instanceId)
+		local picked = call("SelectCar", {
+			instanceId = instanceId,
+		})
+		if picked.ok ~= true then
+			ui.toast(reasonText(picked))
+			return
+		end
+		ui.setState(picked)
+		local result = call("TestLap")
+		refresh()
+		if result.ok ~= true then
+			ui.toast(reasonText(result))
+			return
+		end
+		ui.close()
+	end,
+	onRankUp = function()
+		local result = call("RankUp")
+		refresh()
+		if result.ok ~= true then
+			ui.toast(reasonText(result))
+			return
+		end
+		local label = if type(result.rankLabel) == "string" then result.rankLabel else "Rank up"
+		ui.toast(label)
 	end,
 })
 
@@ -295,10 +359,13 @@ local function bindPrompts(playground: Instance)
 				end
 				local station = descendant.Parent and descendant.Parent:GetAttribute("Station")
 				if station == "R0Dealer" then
+					openStation = "R0Dealer"
 					if ui.isDealerIntroOpen() then
 						return
 					end
-					local state = call("GetState")
+					local state = call("GetState", {
+						stationId = "R0Dealer",
+					})
 					if state.dealerIntroSeen == true then
 						ui.open("gacha")
 					else
@@ -308,9 +375,30 @@ local function bindPrompts(playground: Instance)
 						end)
 					end
 				elseif station == "UpgradeBench" then
+					local state = call("GetState")
+					if type(state) ~= "table" or type(state.rebirthLevel) ~= "number" or state.rebirthLevel < 1 then
+						ui.toast("Upgrades unlock at T1 Street Racer.")
+						return
+					end
+					if state.ok == true then
+						ui.setState(state)
+					end
 					ui.open("upgrade")
+				elseif station == "CarFusion" then
+					local state = call("GetState")
+					if type(state) ~= "table" or type(state.rebirthLevel) ~= "number" or state.rebirthLevel < 3 then
+						ui.toast("Car Fusion unlocks at T3 Pro Racer.")
+						return
+					end
+					ui.open("fusion")
 				elseif station == "RaceKiosk" then
 					ui.open("race")
+				elseif station == "TestLap" then
+					local state = call("GetState")
+					if state.ok == true then
+						ui.setState(state)
+					end
+					ui.open("test")
 				end
 			end)
 		end
@@ -322,7 +410,7 @@ local function attachPlayground(playground: Instance)
 		return
 	end
 	playground:SetAttribute("ClientBound", true)
-	playground:WaitForChild("GaragePad1", 30)
+	playground:WaitForChild("PrivateGarage", 30)
 	if playground.Parent == nil then
 		return
 	end

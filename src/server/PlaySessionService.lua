@@ -17,8 +17,11 @@ end
 local CarConfig = importShared("CarConfig")
 local AutoSellConfig = importShared("AutoSellConfig")
 local CarCatalog = importShared("CarCatalog")
+local PoolConfig = importShared("PoolConfig")
 local UpgradeConfig = importShared("UpgradeConfig")
 local RaceConfig = importShared("RaceConfig")
+local RankConfig = importShared("RankConfig")
+local RaceCourse = importShared("RaceCourse")
 local GoldWallet = importServer("GoldWallet")
 local CarInventoryService = importServer("CarInventoryService")
 local CarGachaService = importServer("CarGachaService")
@@ -53,6 +56,8 @@ PlaySessionService.Reason = table.freeze({
 	BossDisabled = "BossDisabled",
 	CarRacing = "CarRacing",
 	NeedsConfirm = "NeedsConfirm",
+	RankLocked = "RankLocked",
+	PoolLocked = "PoolLocked",
 })
 
 local ACTIONS = {
@@ -66,6 +71,8 @@ local ACTIONS = {
 	StopAutoRace = true,
 	SetAutoSell = true,
 	CompleteDealerIntro = true,
+	TestLap = true,
+	RankUp = true,
 }
 
 local function isPlayerKey(playerKey: any): boolean
@@ -163,7 +170,8 @@ function PlaySessionService.new(options)
 			displayName = model.DisplayName,
 			qualityId = model.Quality,
 			qualityName = if quality ~= nil then quality.DisplayName else model.Quality,
-			colorName = if quality ~= nil then quality.ColorName else "",
+			colorName = if type(model.PaintName) == "string" then model.PaintName else "",
+			paintName = if type(model.PaintName) == "string" then model.PaintName else "",
 			upgradeLevel = record.UpgradeLevel,
 			acquiredRebirth = record.AcquiredRebirth,
 			power = power,
@@ -208,30 +216,53 @@ function PlaySessionService.new(options)
 		}
 	end
 
-	local function autoSellView(session)
-		local setting = session.autoSell or { enabled = false, qualities = {} }
+	local function preference(session)
+		if type(session.autoSell) ~= "table" then
+			session.autoSell = {
+				enabled = false,
+				qualities = {},
+			}
+		end
+		if type(session.autoSell.qualities) ~= "table" then
+			session.autoSell.qualities = {}
+		end
+		return session.autoSell
+	end
+
+	local function autoSellView(session, poolId: string?)
+		local resolved = if type(poolId) == "string" then poolId else (session.viewPool or "T0")
+		local pool = PoolConfig.get(resolved)
+		local allowed = if pool ~= nil then pool.Qualities else {}
+		local setting = preference(session)
+		local visible = {}
+		for _, qualityId in ipairs(allowed) do
+			if setting.qualities[qualityId] == true then
+				visible[qualityId] = true
+			end
+		end
+		local sells, keeps = AutoSellConfig.split(visible, allowed)
 		local prices = {}
-		for _, qualityId in ipairs(AutoSellConfig.Order) do
+		for _, qualityId in ipairs(allowed) do
 			local quality = CarConfig.getQuality(qualityId)
 			table.insert(prices, {
 				qualityId = qualityId,
 				displayName = if quality ~= nil then quality.DisplayName else qualityId,
-				price = AutoSellConfig.price(0, qualityId),
+				price = AutoSellConfig.price(session.rebirthLevel, qualityId),
 			})
 		end
-		local sells, keeps = AutoSellConfig.split(setting.qualities)
 		return {
 			enabled = #sells > 0,
 			qualities = sells,
 			prices = prices,
 			sells = sells,
 			keeps = keeps,
+			poolId = resolved,
 			notice = "Auto-sell lives only in this server session. Rejoining or closing the server turns it off.",
 		}
 	end
 
 	-- 只處理這一台剛抽到的車。移除成功後才入帳，同一個實例與同一個抽車請求只入帳一次。
-	local function sellPulledCar(session, car, qualityId, requestId)
+	local function sellPulledCar(session, car, qualityId, requestId, poolId: string)
 		local stored = session.sales[requestId]
 		if stored ~= nil then
 			return stored
@@ -242,8 +273,8 @@ function PlaySessionService.new(options)
 			sellPrice = 0,
 			balance = balance,
 		}
-		local setting = session.autoSell
-		if not AutoSellConfig.contains(if setting ~= nil then setting.qualities else nil, qualityId) then
+		local setting = preference(session)
+		if not PoolConfig.contains(poolId, qualityId) or not AutoSellConfig.contains(setting.qualities, qualityId) then
 			session.sales[requestId] = kept
 			return kept
 		end
@@ -284,6 +315,10 @@ function PlaySessionService.new(options)
 		session.soldInstances[instanceId] = price
 		if session.selectedInstanceId == instanceId then
 			session.selectedInstanceId = nil
+			session.explicitSelection = false
+		end
+		if session.testLap ~= nil and session.testLap.instanceId == instanceId then
+			session.testLap = nil
 		end
 		local credited = session.wallet:Credit(session.key, price)
 		if credited ~= true then
@@ -301,13 +336,20 @@ function PlaySessionService.new(options)
 
 	local function publicState(session, extra)
 		local balance = session.wallet:GetBalance(session.key)
+		local rank = RankConfig.get(session.rebirthLevel)
+		local poolView = PoolConfig.describe(session.viewPool or "T0", session.rebirthLevel)
 		local state = {
 			ok = true,
 			balance = balance,
+			rebirthLevel = session.rebirthLevel,
+			rankId = if rank ~= nil then rank.id else "--",
+			rankName = if rank ~= nil then rank.name else "--",
+			rankLabel = RankConfig.label(session.rebirthLevel),
 			memoryNotice = PlaySessionService.MemoryNotice,
 			studioSession = session.studioTools,
 			selectedInstanceId = session.selectedInstanceId,
-			pullPrice = CarConfig.SinglePullPrice,
+			pullPrice = if poolView ~= nil then poolView.price else CarConfig.SinglePullPrice,
+			pool = poolView,
 			cars = listCars(session),
 			discovered = discovery:list(session.key),
 			discoveryNotice = "The catalog lives only in this server session and vanishes when the server closes.",
@@ -317,6 +359,8 @@ function PlaySessionService.new(options)
 			raceActive = session.race ~= nil and session.race.active == true,
 			raceId = if session.race ~= nil then session.race.raceId else nil,
 			raceMode = if session.race ~= nil then session.race.mode else nil,
+			raceDuration = if session.race ~= nil and session.race.active == true and session.race.plan ~= nil then session.race.plan.duration else nil,
+			raceRank = if session.race ~= nil and session.race.active == true and session.race.plan ~= nil then session.race.plan.rankLevel else nil,
 		}
 		local auto = autoSnapshot(session)
 		for key, value in pairs(auto) do
@@ -530,6 +574,10 @@ function PlaySessionService.new(options)
 			-- 還沒有重生服務。抽車階級只由伺服器固定為 0，不讀客戶端。
 			rebirthLevel = 0,
 			selectedInstanceId = nil,
+			explicitSelection = false,
+			testLap = nil,
+			testToken = nil,
+			rankToken = nil,
 			tokens = {},
 			raceStarts = {},
 			autoTokens = {},
@@ -547,6 +595,8 @@ function PlaySessionService.new(options)
 			},
 			studioTools = studioTools,
 			dealerIntroSeen = false,
+			viewPool = "T0",
+			dealerStation = "R0Dealer",
 			autoSell = {
 				enabled = false,
 				qualities = {},
@@ -635,11 +685,20 @@ function PlaySessionService.new(options)
 		end
 
 		local bossSlow = mode == "boss"
-		local plan, planReason = RaceConfig.describe(power, bossSlow)
-		if plan == nil then
+		local described, planReason = RaceConfig.describe(power, bossSlow)
+		if described == nil then
 			return {
 				ok = false,
 				reason = planReason or PlaySessionService.Reason.InvalidPower,
+			}
+		end
+		local rankLevel = if type(session.rebirthLevel) == "number" then session.rebirthLevel else 0
+		-- 加速只套這一次。車輛 Power 不含 T 等級，這裡也不要再乘第二次。
+		local plan = RankConfig.scalePlan(described, rankLevel)
+		if plan == nil then
+			return {
+				ok = false,
+				reason = PlaySessionService.Reason.InvalidPower,
 			}
 		end
 
@@ -680,6 +739,7 @@ function PlaySessionService.new(options)
 			instanceId = record.InstanceId,
 			auto = autoHeat == true,
 			generation = if autoHeat == true then session.auto.generation else 0,
+			courseId = "prototype-oval",
 		}
 		if autoHeat ~= true then
 			session.selectedInstanceId = record.InstanceId
@@ -691,6 +751,8 @@ function PlaySessionService.new(options)
 			displayName = model.DisplayName,
 			lane = lane,
 			pose = pose,
+			shift = session.garageShift,
+			ownerKey = session.key,
 		})
 		return ack
 	end
@@ -892,6 +954,77 @@ function PlaySessionService.new(options)
 		return result
 	end
 
+	local function testLapDuration(session, instanceId: string, rankLevel: number): number?
+		local record = session.inventory:GetCar(session.key, instanceId)
+		if record == nil then
+			return nil
+		end
+		local model = CarCatalog.getByModelId(record.ModelId)
+		if model == nil then
+			return nil
+		end
+		local power = CarConfig.calculatePower(record.UpgradeLevel, model.Quality, record.AcquiredRebirth)
+		if power == nil then
+			return nil
+		end
+		local plan = RaceConfig.describe(power, false)
+		if plan == nil or type(plan.duration) ~= "number" then
+			return nil
+		end
+		local laps = RaceConfig.Layout.visualLaps
+		if type(laps) ~= "number" or laps <= 0 then
+			laps = 1
+		end
+		return RankConfig.scaleDuration(plan.duration / laps, rankLevel)
+	end
+
+	local function rollTestLaps(session, now: number?)
+		local lap = session.testLap
+		if type(lap) ~= "table" or type(now) ~= "number" then
+			return
+		end
+		local guard = 0
+		while guard < 6
+			and session.testLap == lap
+			and type(lap.startedAt) == "number"
+			and type(lap.duration) == "number"
+			and lap.duration > 0
+			and now + 1e-4 >= lap.startedAt + lap.duration
+		do
+			lap.lapsCompleted = (lap.lapsCompleted or 0) + 1
+			if lap.bestLap == nil or lap.duration < lap.bestLap then
+				lap.bestLap = lap.duration
+			end
+			lap.startedAt += lap.duration
+			lap.currentLap = (lap.currentLap or 1) + 1
+			local nextDuration = testLapDuration(session, lap.instanceId, session.rebirthLevel)
+			if nextDuration == nil then
+				session.testLap = nil
+				return
+			end
+			lap.duration = nextDuration
+			lap.rankLevel = session.rebirthLevel
+			guard += 1
+		end
+	end
+
+	local function resolveDealer(session, request)
+		local stationId = if type(session.dealerStation) == "string" then session.dealerStation else "R0Dealer"
+		if type(request.stationId) == "string" then
+			stationId = request.stationId
+		elseif type(request.poolId) == "string" then
+			return nil, nil
+		end
+		local pool = PoolConfig.poolForStation(stationId)
+		if pool == nil then
+			return nil, nil
+		end
+		if type(request.poolId) == "string" and request.poolId ~= pool.Id then
+			return nil, nil
+		end
+		return pool, stationId
+	end
+
 	function service:dispatch(playerKey, request)
 		if not isPlayerKey(playerKey) then
 			return {
@@ -922,11 +1055,57 @@ function PlaySessionService.new(options)
 		end
 
 		if action == "GetState" then
+			if type(request.previewPool) == "string" then
+				if session.studioTools ~= true or PoolConfig.get(request.previewPool) == nil then
+					return {
+						ok = false,
+						reason = PlaySessionService.Reason.InvalidRequest,
+						balance = session.wallet:GetBalance(session.key),
+					}
+				end
+				local state = publicState(session)
+				state.preview = PoolConfig.describe(request.previewPool, session.rebirthLevel)
+				return state
+			end
+			if type(request.stationId) == "string" or type(request.poolId) == "string" then
+				local pool, stationId = resolveDealer(session, request)
+				if pool == nil or stationId == nil then
+					return {
+						ok = false,
+						reason = PlaySessionService.Reason.InvalidRequest,
+						balance = session.wallet:GetBalance(session.key),
+					}
+				end
+				session.dealerStation = stationId
+				session.viewPool = pool.Id
+			end
 			return publicState(session)
 		end
 
 		if action == "CompleteDealerIntro" then
 			session.dealerIntroSeen = true
+			return publicState(session)
+		end
+
+		if action == "RankUp" then
+			local rankToken, rankTokenReason = normalizeToken(request.attemptToken)
+			if rankTokenReason ~= nil or rankToken == nil then
+				return {
+					ok = false,
+					reason = rankTokenReason or PlaySessionService.Reason.InvalidToken,
+				}
+			end
+			if session.rankToken == rankToken then
+				return publicState(session)
+			end
+			if session.rebirthLevel >= CarConfig.MaxRebirthLevel then
+				return {
+					ok = false,
+					reason = "MaxRank",
+				}
+			end
+			session.rankToken = rankToken
+			session.rebirthLevel += 1
 			return publicState(session)
 		end
 
@@ -957,12 +1136,64 @@ function PlaySessionService.new(options)
 				}
 			end
 			session.selectedInstanceId = record.InstanceId
+			session.explicitSelection = true
+			return publicState(session)
+		end
+
+		if action == "TestLap" then
+			if session.testToken == token then
+				return publicState(session)
+			end
+			local instanceId = session.selectedInstanceId
+			if type(instanceId) ~= "string" then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.NoSelectedCar,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			local record = session.inventory:GetCar(session.key, instanceId)
+			if record == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.NoSelectedCar,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			local model = CarCatalog.getByModelId(record.ModelId)
+			if model == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.UnknownCar,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			local rankLevel = if type(session.rebirthLevel) == "number" then session.rebirthLevel else 0
+			local lapDuration = testLapDuration(session, record.InstanceId, rankLevel)
+			if lapDuration == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.InvalidPower,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			session.testToken = token
+			session.testLap = {
+				instanceId = record.InstanceId,
+				startedAt = clock(),
+				duration = lapDuration,
+				rankLevel = rankLevel,
+				currentLap = 1,
+				lapsCompleted = 0,
+				bestLap = nil,
+				courseId = RaceCourse.testOval().id,
+			}
 			return publicState(session)
 		end
 
 		if action == "SetAutoSell" then
-			local selected, ordered = AutoSellConfig.readList(request.qualities)
-			if selected == nil or ordered == nil then
+			local pool, stationId = resolveDealer(session, request)
+			if pool == nil or stationId == nil then
 				return {
 					ok = false,
 					reason = PlaySessionService.Reason.InvalidRequest,
@@ -970,27 +1201,88 @@ function PlaySessionService.new(options)
 					autoSell = autoSellView(session),
 				}
 			end
-			local alreadyLegendary = AutoSellConfig.contains(session.autoSell.qualities, "Legendary")
-			if selected.Legendary == true and not alreadyLegendary and request.confirmLegendary ~= true then
+			local poolId = pool.Id
+			if not PoolConfig.unlocked(poolId, session.rebirthLevel) then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.PoolLocked,
+					balance = session.wallet:GetBalance(session.key),
+					autoSell = autoSellView(session, poolId),
+				}
+			end
+			local selected, ordered = AutoSellConfig.readList(request.qualities)
+			if selected == nil or ordered == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.InvalidRequest,
+					balance = session.wallet:GetBalance(session.key),
+					autoSell = autoSellView(session, poolId),
+				}
+			end
+			for _, qualityId in ipairs(ordered) do
+				if not PoolConfig.contains(poolId, qualityId) then
+					return {
+						ok = false,
+						reason = PlaySessionService.Reason.InvalidRequest,
+						balance = session.wallet:GetBalance(session.key),
+						autoSell = autoSellView(session, poolId),
+					}
+				end
+			end
+			local setting = preference(session)
+			local needsConfirm = false
+			for _, qualityId in ipairs(ordered) do
+				if AutoSellConfig.needsConfirm(qualityId) and setting.qualities[qualityId] ~= true then
+					needsConfirm = true
+				end
+			end
+			if needsConfirm and request.confirmLegendary ~= true then
 				return {
 					ok = false,
 					reason = PlaySessionService.Reason.NeedsConfirm,
 					balance = session.wallet:GetBalance(session.key),
-					autoSell = autoSellView(session),
+					autoSell = autoSellView(session, poolId),
 				}
 			end
-			local stored = {}
+			local chosen = {}
 			for _, qualityId in ipairs(ordered) do
-				stored[qualityId] = true
+				chosen[qualityId] = true
 			end
-			session.autoSell.qualities = stored
-			session.autoSell.enabled = #ordered > 0
+			for _, qualityId in ipairs(pool.Qualities) do
+				if chosen[qualityId] == true then
+					setting.qualities[qualityId] = true
+				else
+					setting.qualities[qualityId] = nil
+				end
+			end
+			session.dealerStation = stationId
+			session.viewPool = poolId
 			return publicState(session)
 		end
 
 		if action == "Pull" then
+			local pool, stationId = resolveDealer(session, request)
+			if pool == nil or stationId == nil then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.InvalidRequest,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
+			local poolId = pool.Id
+			if not PoolConfig.unlocked(poolId, session.rebirthLevel) then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.PoolLocked,
+					balance = session.wallet:GetBalance(session.key),
+					pool = PoolConfig.describe(poolId, session.rebirthLevel),
+					charged = false,
+				}
+			end
+			session.dealerStation = stationId
+			session.viewPool = poolId
 			local outcome = reservedCall(session, action, token, PlaySessionService.PullInterval, function(requestId)
-				local result = session.gacha:Pull(session.key, session.rebirthLevel, requestId)
+				local result = session.gacha:Pull(session.key, session.rebirthLevel, requestId, poolId)
 				if result.ok == true and type(result.modelId) == "string" then
 					discovery:record(session.key, result.modelId)
 				end
@@ -1009,7 +1301,7 @@ function PlaySessionService.new(options)
 				end
 				local sale = nil
 				if result.ok == true and result.car ~= nil then
-					sale = sellPulledCar(session, result.car, result.quality, requestId)
+					sale = sellPulledCar(session, result.car, result.quality, requestId, poolId)
 				end
 				return {
 					ok = result.ok == true,
@@ -1045,6 +1337,15 @@ function PlaySessionService.new(options)
 					reason = idReason or CarInventoryService.Reason.InvalidInstanceId,
 				}
 			end
+			if (session.rebirthLevel or 0) < 1 then
+				return {
+					ok = false,
+					reason = PlaySessionService.Reason.RankLocked,
+					instanceId = instanceId,
+					charged = false,
+					balance = session.wallet:GetBalance(session.key),
+				}
+			end
 			if lockedInstanceId(session) == instanceId then
 				return {
 					ok = false,
@@ -1059,6 +1360,10 @@ function PlaySessionService.new(options)
 				local affectedId = result.instanceId or instanceId
 				if result.removed == true and session.selectedInstanceId == affectedId then
 					session.selectedInstanceId = nil
+					session.explicitSelection = false
+				end
+				if result.removed == true and session.testLap ~= nil and session.testLap.instanceId == affectedId then
+					session.testLap = nil
 				end
 				local outcomeName = nil
 				if result.outcome ~= nil then
@@ -1109,6 +1414,136 @@ function PlaySessionService.new(options)
 			ok = false,
 			reason = PlaySessionService.Reason.UnknownAction,
 			balance = session.wallet:GetBalance(session.key),
+		}
+	end
+
+	function service:leaderLine(playerKey)
+		local session = sessions[playerKey]
+		if session == nil then
+			return nil
+		end
+		return {
+			rank = RankConfig.label(session.rebirthLevel),
+			gold = session.wallet:GetBalance(session.key),
+		}
+	end
+
+	function service:setGarageShift(playerKey, shift)
+		local session = sessions[playerKey]
+		if session == nil then
+			return
+		end
+		session.garageShift = shift
+	end
+
+	local function rankedCar(record)
+		local model = CarCatalog.getByModelId(record.ModelId)
+		if model == nil then
+			return nil
+		end
+		local power = CarConfig.calculatePower(record.UpgradeLevel, model.Quality, record.AcquiredRebirth)
+		if type(power) ~= "number" then
+			return nil
+		end
+		return {
+			displayName = model.DisplayName,
+			upgradeLevel = record.UpgradeLevel,
+			power = power,
+			modelId = record.ModelId,
+			qualityId = model.Quality,
+			instanceId = record.InstanceId,
+		}
+	end
+
+	-- 性能高的優先。相同時比強化等級，再比車款 id，最後比實例 id。回傳給畫面的表不含實例 id。
+	local function beats(candidate, current): boolean
+		if current == nil then
+			return true
+		end
+		if candidate.power ~= current.power then
+			return candidate.power > current.power
+		end
+		if candidate.upgradeLevel ~= current.upgradeLevel then
+			return candidate.upgradeLevel > current.upgradeLevel
+		end
+		if candidate.modelId ~= current.modelId then
+			return candidate.modelId < current.modelId
+		end
+		return candidate.instanceId < current.instanceId
+	end
+
+	local function publicCar(car)
+		if car == nil then
+			return nil
+		end
+		return {
+			displayName = car.displayName,
+			upgradeLevel = car.upgradeLevel,
+			power = car.power,
+			modelId = car.modelId,
+			qualityId = car.qualityId,
+		}
+	end
+
+	function service:garageView(playerKey, now: number?)
+		local session = sessions[playerKey]
+		if session == nil then
+			return nil
+		end
+		local listed = session.inventory:ListCars(session.key)
+		local best = nil
+		local byId = {}
+		if type(listed) == "table" then
+			for _, record in ipairs(listed) do
+				local ranked = rankedCar(record)
+				if ranked ~= nil then
+					byId[ranked.instanceId] = ranked
+					if beats(ranked, best) then
+						best = ranked
+					end
+				end
+			end
+		end
+		rollTestLaps(session, now)
+		local selected = if type(session.selectedInstanceId) == "string" then byId[session.selectedInstanceId] else nil
+		local lap = session.testLap
+		local current = nil
+		local lapTime = nil
+		local elapsed = nil
+		local alpha = 0
+		if type(lap) == "table" and type(lap.instanceId) == "string" then
+			current = byId[lap.instanceId]
+			if current ~= nil and type(lap.duration) == "number" and lap.duration > 0 then
+				lapTime = lap.duration
+				local raw = 0
+				if type(now) == "number" and type(lap.startedAt) == "number" then
+					raw = now - lap.startedAt
+				end
+				elapsed = math.clamp(raw, 0, lap.duration)
+				alpha = elapsed / lap.duration
+			end
+		end
+		local running = type(elapsed) == "number" and type(lapTime) == "number" and elapsed < lapTime
+		local shownRank = session.rebirthLevel
+		if current ~= nil and type(lap) == "table" and type(lap.rankLevel) == "number" then
+			shownRank = lap.rankLevel
+		end
+		return {
+			status = if running then "TESTING" else "IDLE",
+			currentName = if current ~= nil then current.displayName else nil,
+			upgradeLevel = if current ~= nil then current.upgradeLevel else nil,
+			power = if current ~= nil then current.power else nil,
+			lapTime = lapTime,
+			elapsed = elapsed,
+			testAlpha = alpha,
+			test = publicCar(current),
+			best = publicCar(best),
+			bench = if session.explicitSelection == true then publicCar(selected) else nil,
+			rebirthLevel = session.rebirthLevel,
+			rankBoost = RankConfig.boostLabel(shownRank),
+			currentLap = if current ~= nil and type(lap) == "table" then lap.currentLap or 1 else nil,
+			bestLap = if type(lap) == "table" then lap.bestLap else nil,
+			lapsCompleted = if type(lap) == "table" then lap.lapsCompleted or 0 else nil,
 		}
 	end
 

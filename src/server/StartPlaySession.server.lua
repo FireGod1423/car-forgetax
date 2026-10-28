@@ -55,8 +55,9 @@ local function keyFor(player: Player): string
 end
 
 local function moveToSpawn(player: Player)
-	local playground = workspace:FindFirstChild("CarForgeTaxPlayground")
-	local spawnPart = if playground ~= nil then playground:FindFirstChild("PlayerSpawn") else nil
+	local key = keyFor(player)
+	local bay = PlaygroundBuilder.claimBay(key)
+	local spawnPart = if bay ~= nil then bay.spawn else nil
 	if spawnPart ~= nil and spawnPart:IsA("SpawnLocation") then
 		player.RespawnLocation = spawnPart
 	end
@@ -67,10 +68,45 @@ local function moveToSpawn(player: Player)
 	end
 end
 
+local function syncLeader(player: Player, key: string)
+	local line = service:leaderLine(key)
+	if line == nil then
+		return
+	end
+	local stats = player:FindFirstChild("leaderstats")
+	if stats == nil then
+		stats = Instance.new("Folder")
+		stats.Name = "leaderstats"
+		stats.Parent = player
+		local rank = Instance.new("StringValue")
+		rank.Name = "Rank"
+		rank.Parent = stats
+		local gold = Instance.new("IntValue")
+		gold.Name = "Gold"
+		gold.Parent = stats
+	end
+	local rank = stats:FindFirstChild("Rank")
+	local gold = stats:FindFirstChild("Gold")
+	if rank ~= nil and rank:IsA("StringValue") then
+		rank.Value = line.rank
+	end
+	if gold ~= nil and gold:IsA("IntValue") then
+		local amount = line.gold
+		gold.Value = if type(amount) == "number" then math.floor(amount) else 0
+	end
+end
+
 local function attach(player: Player)
 	local key = keyFor(player)
 	playersByKey[key] = player
 	service:createSession(key)
+	local bay = PlaygroundBuilder.claimBay(key)
+	if bay ~= nil then
+		service:setGarageShift(key, bay.offset)
+		if bay.spawn ~= nil then
+			player.RespawnLocation = bay.spawn
+		end
+	end
 	if boundPlayers[key] ~= true then
 		boundPlayers[key] = true
 		player.CharacterAdded:Connect(function()
@@ -78,12 +114,15 @@ local function attach(player: Player)
 		end)
 	end
 	moveToSpawn(player)
+	syncLeader(player, key)
+	PlaygroundBuilder.paintBay(key, service:garageView(key, os.clock()))
 end
 
 local function detach(player: Player)
 	local key = keyFor(player)
 	playersByKey[key] = nil
 	service:removeSession(key)
+	PlaygroundBuilder.releaseBay(key)
 end
 
 local buildOk, buildErr = pcall(function()
@@ -133,14 +172,23 @@ finishedEvent.OnServerEvent:Connect(function(player)
 end)
 
 RunService.Heartbeat:Connect(function()
+	local now = os.clock()
 	local ok, err = pcall(function()
-		service:advanceAll(os.clock())
+		service:advanceAll(now)
 	end)
 	if not ok then
 		warn("[CarForgeTax] 競速推進失敗：" .. tostring(err))
 	end
+	for key, player in pairs(playersByKey) do
+		if player.Parent ~= nil then
+			pcall(function()
+				syncLeader(player, key)
+				PlaygroundBuilder.paintBay(key, service:garageView(key, now))
+			end)
+		end
+	end
 	pcall(function()
-		PlaygroundBuilder.stepDealer(workspace:FindFirstChild(PlaygroundBuilder.FolderName), os.clock())
+		PlaygroundBuilder.stepDealer(workspace:FindFirstChild(PlaygroundBuilder.FolderName), now)
 	end)
 end)
 
